@@ -1,0 +1,14 @@
+# CUDA extras — only needed on Nvidia/AMD GPU servers
+# Install after requirements.txt:  pip install -r requirements-cuda.txt
+-r requirements.txt
+torch>=2.1.0
+
+# Scheduling + platform integrations (not in base requirements.txt)
+sqlalchemy[asyncio]>=2.0.30
+aiosqlite>=0.20.0
+asyncpg>=0.29.0
+apscheduler>=3.10.4
+httpx>=0.27.0
+google-api-python-client>=2.120.0
+google-auth-oauthlib>=1.2.0
+google-auth>=2.28.0

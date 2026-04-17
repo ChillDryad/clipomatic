@@ -1,0 +1,31 @@
+# Nvidia GPU override — layer on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up --build
+
+services:
+  momiji-clipper:
+    build:
+      args:
+        BASE_IMAGE: nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+        REQUIREMENTS: requirements-cuda.txt
+    runtime: nvidia
+    environment:
+      - WHISPER_DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  ollama:
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

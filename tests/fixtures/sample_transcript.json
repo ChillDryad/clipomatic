@@ -1,0 +1,40 @@
+{
+  "language": "en",
+  "language_probability": 0.99,
+  "duration": 3600.5,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 5.2,
+      "text": "Hello everyone, welcome back to the stream!",
+      "words": [
+        {"word": "Hello", "start": 0.0, "end": 0.5, "probability": 0.99},
+        {"word": "everyone,", "start": 0.5, "end": 1.2, "probability": 0.98},
+        {"word": "welcome", "start": 1.2, "end": 1.8, "probability": 0.97},
+        {"word": "back", "start": 1.8, "end": 2.0, "probability": 0.99},
+        {"word": "to", "start": 2.0, "end": 2.2, "probability": 0.99},
+        {"word": "the", "start": 2.2, "end": 2.5, "probability": 0.99},
+        {"word": "stream!", "start": 2.5, "end": 3.0, "probability": 0.95}
+      ]
+    },
+    {
+      "start": 125.0,
+      "end": 192.0,
+      "text": "OH MY GOD! ARE YOU KIDDING ME RIGHT NOW?! THIS IS ABSOLUTELY INSANE!",
+      "words": [
+        {"word": "OH", "start": 125.0, "end": 125.3, "probability": 0.99},
+        {"word": "MY", "start": 125.3, "end": 125.6, "probability": 0.99},
+        {"word": "GOD!", "start": 125.6, "end": 126.0, "probability": 0.98}
+      ]
+    },
+    {
+      "start": 300.0,
+      "end": 345.0,
+      "text": "You know, I really appreciate all of you here. This community means the world to me.",
+      "words": [
+        {"word": "You", "start": 300.0, "end": 300.2, "probability": 0.99},
+        {"word": "know,", "start": 300.2, "end": 300.5, "probability": 0.99}
+      ]
+    }
+  ]
+}

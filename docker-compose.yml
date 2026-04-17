@@ -1,0 +1,50 @@
+# Base compose — works on any machine (CPU, Apple Silicon via Rosetta, AMD ROCm).
+# For Nvidia GPU passthrough, layer on the override:
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up --build
+
+services:
+  momiji-clipper:
+    build:
+      context: .
+      args:
+        BASE_IMAGE: python:3.10-slim
+    container_name: momiji-clipper
+    volumes:
+      - ./workspace:/app/workspace
+    environment:
+      - WORKSPACE_DIR=/app/workspace
+      - WHISPER_MODEL=${WHISPER_MODEL:-large-v3}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama:11434/v1}
+      - LLM_API_KEY=${LLM_API_KEY:-ollama}
+      - LLM_MODEL=${LLM_MODEL:-llama3}
+      - JWT_SECRET=${JWT_SECRET}
+      - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: momiji-frontend
+    ports:
+      - "7860:80"
+    depends_on:
+      - momiji-clipper
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: momiji-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

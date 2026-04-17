@@ -1,0 +1,116 @@
+import { Modal } from '../ui/Modal'
+import { Button } from '../ui/Button'
+import { Select } from '../ui/Select'
+import { useTheme } from '../../hooks/useTheme'
+import { usePipeline } from '../../context/PipelineContext'
+import { fetchModels } from '../../api'
+
+const WHISPER_MODELS = [
+  { value: 'large-v3', label: 'large-v3' },
+  { value: 'large-v2', label: 'large-v2' },
+  { value: 'medium', label: 'medium' },
+  { value: 'small', label: 'small' },
+  { value: 'base', label: 'base' },
+]
+
+const WHISPER_DEVICES = [
+  { value: 'auto', label: 'auto' },
+  { value: 'cuda', label: 'cuda' },
+  { value: 'cpu', label: 'cpu' },
+]
+
+interface SettingsModalProps {
+  open: boolean
+  onClose: () => void
+}
+
+export function SettingsModal({ open, onClose }: SettingsModalProps) {
+  const { theme } = useTheme()
+  const {
+    config,
+    setConfig,
+    availableModels,
+    setAvailableModels,
+    fetchingModels,
+    setFetchingModels,
+    modelFetchError,
+    setModelFetchError,
+  } = usePipeline()
+
+  // Config is loaded automatically on app mount by PipelineContext
+  // This effect is kept for backwards compatibility if settings are changed while modal is open
+
+  const handleFetchModels = async () => {
+    setFetchingModels(true)
+    setModelFetchError(null)
+    try {
+      const models = await fetchModels()
+      setAvailableModels(models)
+      if (models.length > 0 && !models.includes(config.llmModel)) {
+        setConfig({ llmModel: models[0] })
+      }
+    } catch (err) {
+      setModelFetchError(String(err))
+    } finally {
+      setFetchingModels(false)
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Settings">
+      <div className="space-y-5">
+        {/* Whisper section */}
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">Whisper</p>
+          <Select
+            label="Model"
+            value={config.whisperModel}
+            onChange={e => setConfig({ whisperModel: e.target.value })}
+            options={WHISPER_MODELS}
+          />
+          <Select
+            label="Device"
+            value={config.whisperDevice}
+            onChange={e => setConfig({ whisperDevice: e.target.value })}
+            options={WHISPER_DEVICES}
+          />
+        </div>
+
+        {/* LLM section */}
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">LLM</p>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleFetchModels}
+            loading={fetchingModels}
+          >
+            {fetchingModels ? 'Fetching…' : 'Fetch models'}
+          </Button>
+          {modelFetchError && (
+            <p className="text-xs text-[var(--ctp-red)]">{modelFetchError}</p>
+          )}
+          {availableModels.length > 0 ? (
+            <Select
+              label="Model"
+              value={config.llmModel}
+              onChange={e => setConfig({ llmModel: e.target.value })}
+              options={availableModels.map(m => ({ value: m, label: m }))}
+            />
+          ) : (
+            <label className="space-y-1.5 block">
+              <span className="text-xs text-[var(--ctp-subtext)] font-medium">Model name</span>
+              <input
+                type="text"
+                value={config.llmModel}
+                onChange={e => setConfig({ llmModel: e.target.value })}
+                placeholder="e.g. llama3.2"
+                className="glass-input w-full px-3 py-2 text-sm text-[var(--ctp-text)]"
+              />
+            </label>
+          )}
+        </div>
+      </div>
+    </Modal>
+  )
+}

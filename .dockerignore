@@ -1,0 +1,24 @@
+# Local Python environment — 650MB+ that Docker has no use for
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Runtime data — mounted as a volume at runtime
+workspace/
+
+# Secrets — passed via env_file at runtime
+.env
+
+# Dev/OS clutter
+.git/
+.gitignore
+.DS_Store
+*.log
+
+# Docs
+README.md
