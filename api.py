@@ -1019,7 +1019,7 @@ Example Output Structure:
         resp = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": new_system_prompt},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.4,

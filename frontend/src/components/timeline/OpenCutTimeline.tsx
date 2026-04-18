@@ -3,7 +3,7 @@ import { usePlaybackStore, useTimelineStore, useSelectionStore } from '../../sto
 import { TimelineRuler } from './OpenCutRuler'
 import { TimelineTrackRow } from './OpenCutTrack'
 import { TimelinePlayhead } from './OpenCutPlayhead'
-import { TimelineMarkerTrack } from './TimelineMarkerTrack'
+import { OpenCutMarkerTrack } from './OpenCutMarkerTrack'
 import type { Track } from '../../types'
 
 interface OpenCutTimelineProps {
@@ -34,6 +34,10 @@ export function OpenCutTimeline({
   const zoom = usePlaybackStore(state => state.zoom)
   const snapEnabled = usePlaybackStore(state => state.snapEnabled)
   const selectedSegmentIds = useSelectionStore(state => state.selectedSegmentIds)
+  const markers = useTimelineStore(state => state.markers)
+  const addMarker = useTimelineStore(state => state.addMarker)
+  const deleteMarker = useTimelineStore(state => state.deleteMarker)
+  const updateMarker = useTimelineStore(state => state.updateMarker)
 
   const timelineWidth = Math.max(duration * zoom + TIMELINE_PADDING_LEFT, 1000)
 
@@ -100,11 +104,15 @@ export function OpenCutTimeline({
 
         {/* Marker Track */}
         <div className="sticky top-[32px] z-10 bg-[var(--ctp-surface)]/95 backdrop-blur">
-          <TimelineMarkerTrack
-            duration={duration}
+          <OpenCutMarkerTrack
+            markers={markers}
             zoom={zoom}
+            duration={duration}
             currentTime={currentTime}
             onSeek={onSeek}
+            onAddMarker={(time) => addMarker({ id: crypto.randomUUID(), time, label: '', color: '#89b4fa' })}
+            onDeleteMarker={deleteMarker}
+            onUpdateMarker={updateMarker}
           />
         </div>
 
@@ -117,7 +125,6 @@ export function OpenCutTimeline({
               index={index}
               zoom={zoom}
               snapEnabled={snapEnabled}
-              isSelected={track.segments.some(s => selectedSegmentIds.has(s.id))}
               onSelectSegment={onSelectSegment}
               onUpdateSegment={onUpdateSegment}
               onDeleteSegment={onDeleteSegment}

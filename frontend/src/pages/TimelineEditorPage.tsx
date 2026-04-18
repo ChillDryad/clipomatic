@@ -1,16 +1,17 @@
 import { useEffect, useCallback, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { loadTimelineDataByProject, updateClipMetadata, regenerateClipMetadata, renderClip, createMarker, listMarkers, updateMarker as updateMarkerApi, deleteMarker as deleteMarkerApi, uploadMedia, listMedia, uploadAudio, downloadSegment, getAbortController, cancelOperation, getCachedTranscript, type MediaAsset as ApiMediaAsset } from '../api'
-import { Timeline } from '../components/timeline/Timeline'
+import { OpenCutTimeline } from '../components/timeline/OpenCutTimeline'
 import { TimelineToolbar } from '../components/timeline/TimelineToolbar'
 import { PreviewPlayer } from '../components/timeline/PreviewPlayer'
+import { PreviewViewport } from '../components/preview/PreviewViewport'
 import { SubtitleEditor } from '../components/timeline/SubtitleEditor'
 import { WaveformCanvas } from '../components/timeline/WaveformCanvas'
 import { KeyboardShortcutsModal, useKeyboardShortcutsHelp } from '../components/panels/KeyboardShortcutsModal'
 import { MarkerList } from '../components/panels/MarkerList'
-import { PropertiesPanel } from '../components/panels/PropertiesPanel'
+import { PropertiesPanel as EditorPropertiesPanel } from '../components/properties/PropertiesPanel'
 import { MediaLibrary } from '../components/panels/MediaLibrary'
-import { ResizablePanel } from '../components/layout/ResizablePanel'
+import { EditorLayout } from '../components/layout/EditorLayout'
 import type { TrackSegment, CropBox, Transcript, EditorNavigationState, Marker } from '../types'
 import { useTimelineStore, usePlaybackStore, useSelectionStore, buildSubtitleSegments } from '../stores'
 
@@ -165,16 +166,19 @@ export function TimelineEditorPage() {
           })
         })
 
-        // Auto-download segment if video file doesn't exist and we have a source URL
+        // Auto-download clip segment with 5-second buffer on each side for editing flexibility
         const sourceUrlToUse = twitchUrl || sourceUrl
-        if (sourceUrlToUse && (!videoPath || !videoPath.startsWith('/workspace/renders/'))) {
+        if (sourceUrlToUse) {
           setSegmentDownloadProgress({ p: 0, l: 'Downloading clip segment for editing…' })
           try {
             const controller = getAbortController('timeline-segment')
+            // Download full clip + 5 seconds at start and end for editing flexibility
+            const downloadStart = Math.max(0, clip.start - 5)
+            const downloadEnd = clip.end + 5
             const segPath = await downloadSegment(
               sourceUrlToUse,
-              Math.max(0, clip.start - 10),
-              clip.end + 30,
+              downloadStart,
+              downloadEnd,
               (p, l) => setSegmentDownloadProgress({ p, l }),
               controller.signal,
             )
@@ -676,197 +680,145 @@ export function TimelineEditorPage() {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Top bar */}
-      <div className="glass-card p-4 flex items-center justify-between">
-        <button onClick={handleDiscard} className="btn-ghost flex items-center gap-1">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-          </svg>
-          Back
-        </button>
-
-        <h1 className="font-semibold text-[var(--ctp-text)] truncate px-4">
-          {clip.title}
-        </h1>
-
-        <div className="flex items-center gap-2">
-          {regenerating ? (
-            <span className="text-xs text-[var(--ctp-subtext)] animate-pulse">Generating…</span>
-          ) : (
-            <button onClick={handleRegenerateMetadata} className="btn-secondary text-sm min-h-[44px]">
-              Generate
-            </button>
-          )}
-          <button onClick={handleSave} className="btn-primary flex items-center gap-1">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+    <EditorLayout
+      header={
+        <div className="flex items-center gap-2 w-full">
+          <button onClick={handleDiscard} className="btn-ghost flex items-center gap-1">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
-            Save & Close
+            Back
           </button>
-        </div>
-      </div>
 
-      {/* Preview Player */}
-      {avatarCrop && gameplayCrop && (
-        <PreviewPlayer
-          videoPath={videoPath}
-          currentTime={currentTime}
-          videoDimensions={videoDimensions}
+          <h1 className="font-semibold text-[var(--ctp-text)] truncate px-4 flex-1">
+            {clip.title}
+          </h1>
+
+          <div className="flex items-center gap-2">
+            {regenerating ? (
+              <span className="text-xs text-[var(--ctp-subtext)] animate-pulse">Generating…</span>
+            ) : (
+              <button onClick={handleRegenerateMetadata} className="btn-secondary text-sm min-h-[44px]">
+                Generate
+              </button>
+            )}
+            <button onClick={handleSave} className="btn-primary flex items-center gap-1">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              Save & Close
+            </button>
+          </div>
+        </div>
+      }
+      mediaContent={
+        <MediaLibrary
+          open={showMediaLibrary}
+          onClose={() => setShowMediaLibrary(false)}
+          onSelect={handleSelectMedia}
+          assets={mediaAssets.map(a => ({
+            ...a,
+            original_filename: a.filename,
+            asset_type: a.type === 'video' ? 'video' : 'image' as const,
+          }))}
+          onUpload={handleUploadMedia}
+        />
+      }
+      previewContent={
+        <div className="flex flex-col h-full">
+          {avatarCrop && gameplayCrop && (
+            <PreviewViewport
+              videoPath={videoPath}
+              currentTime={currentTime}
+              videoDimensions={videoDimensions}
+              avatarCrop={avatarCrop}
+              gameplayCrop={gameplayCrop}
+              clipStart={clip.start}
+              clipEnd={clip.end}
+              isPlaying={isPlaying}
+              onCropChange={handleCropChange}
+              onSeek={seek}
+              downloadState={segmentDownloadProgress ? 'downloading' : 'done'}
+              downloadProgress={segmentDownloadProgress?.p ?? 0}
+              downloadLabel={segmentDownloadProgress?.l ?? ''}
+            />
+          )}
+          {/* Toolbar */}
+          <div className="flex-shrink-0 p-2">
+            <TimelineToolbar
+              isPlaying={isPlaying}
+              canSplit={canSplit}
+              canDelete={selectedSegmentId !== null}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              pxPerSecond={pxPerSecond}
+              onPlayPause={togglePlay}
+              onStepBack={() => stepBackward(0.5)}
+              onStepForward={() => stepForward(0.5)}
+              onSplit={handleSplit}
+              onDelete={handleDeleteSegment}
+              onAddSubtitle={handleAddSubtitle}
+              onUndo={undo}
+              onRedo={redo}
+              setPxPerSecond={setZoom}
+              renderSettings={renderSettings}
+              onRenderSettingsChange={setRenderSettings}
+              onRender={handleRender}
+            />
+          </div>
+        </div>
+      }
+      propertiesContent={
+        <EditorPropertiesPanel
+          selectedSegment={selectedSegment}
           avatarCrop={avatarCrop}
           gameplayCrop={gameplayCrop}
-          clipStart={clip.start}
-          clipEnd={clip.end}
-          twitchUrl={twitchUrl}
-          sourceUrl={sourceUrl}
-          isPlaying={isPlaying}
-          onCropChange={handleCropChange}
-          onSeek={seek}
-          downloadState={segmentDownloadProgress ? 'downloading' : videoPath ? 'done' : 'idle'}
-          downloadProgress={segmentDownloadProgress?.p ?? 0}
-          downloadLabel={segmentDownloadProgress?.l ?? ''}
-        />
-      )}
-
-      {/* Toolbar */}
-      <TimelineToolbar
-        isPlaying={isPlaying}
-        canSplit={canSplit}
-        canDelete={selectedSegmentId !== null}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        pxPerSecond={pxPerSecond}
-        onPlayPause={togglePlay}
-        onStepBack={() => stepBackward(0.5)}
-        onStepForward={() => stepForward(0.5)}
-        onSplit={handleSplit}
-        onDelete={handleDeleteSegment}
-        onAddSubtitle={handleAddSubtitle}
-        onUndo={undo}
-        onRedo={redo}
-        setPxPerSecond={setZoom}
-        renderSettings={renderSettings}
-        onRenderSettingsChange={setRenderSettings}
-        onRender={handleRender}
-      />
-
-      {/* Segment download progress */}
-      {segmentDownloadProgress && (
-        <div className="glass-card p-4 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-[var(--ctp-text)]">{segmentDownloadProgress.l}</span>
-          </div>
-          <div className="w-full bg-[var(--ctp-surface-1)] rounded-full h-2">
-            <div
-              className="bg-[var(--ctp-mauve)] h-2 rounded-full transition-all"
-              style={{ width: `${segmentDownloadProgress.p}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Render progress overlay */}
-      {renderProgress && (
-        <div className="glass-card p-4 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-[var(--ctp-text)]">Rendering...</span>
-            <button
-              onClick={handleRenderCancel}
-              disabled={isCancellingRender}
-              className="text-xs text-[var(--ctp-red)] hover:text-[var(--ctp-red)]/80 disabled:opacity-50 flex items-center gap-1"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              {isCancellingRender ? 'Cancelling…' : 'Cancel'}
-            </button>
-          </div>
-          <div className="w-full bg-[var(--ctp-surface-1)] rounded-full h-2">
-            <div
-              className="bg-[var(--ctp-mauve)] h-2 rounded-full transition-all"
-              style={{ width: `${renderProgress.p}%` }}
-            />
-          </div>
-          <span className="text-xs text-[var(--ctp-subtext)]">{renderProgress.l}</span>
-          <button onClick={executeRender} disabled={isCancellingRender} className="btn-primary text-sm mt-1">
-            {isCancellingRender ? 'Cancelling…' : 'Start Render'}
-          </button>
-        </div>
-      )}
-
-      {/* Timeline */}
-      <Timeline
-        timelineState={timelineState}
-        currentTime={currentTime}
-        selectedSegmentId={selectedSegmentId}
-        pxPerSecond={pxPerSecond}
-        setPxPerSecond={setZoom}
-        onSeek={seek}
-        onSelectSegment={(id) => select(id ?? '', 'replace')}
-        onUpdateSegment={handleUpdateSegment}
-        onDeleteSegment={(trackId, segmentId) => {
-          clearSelection()
-          pushUndo()
-          deleteSegment(trackId, segmentId)
-          setHasUnsavedChanges(true)
-        }}
-        onToggleVisible={handleToggleVisible}
-        markers={markers}
-        onAddMarker={handleAddMarker}
-        onDeleteMarker={handleDeleteMarker}
-        onUpdateMarker={handleUpdateMarker}
-      />
-
-      {/* Waveform Display */}
-      <div className="glass-card p-3">
-        <WaveformCanvas
-          width={800}
-          height={60}
-          audioPath={videoPath}
           currentTime={currentTime}
           duration={duration}
-          onSeek={seek}
+          onUpdateSegment={(patch) => {
+            if (selectedSegmentId && subtitleTrack) {
+              handleUpdateSegment(subtitleTrack.id, selectedSegmentId, patch)
+            }
+          }}
+          onCropChange={handleCropChange}
         />
-      </div>
+      }
+      timelineContent={
+        <div className="h-full flex flex-col">
+          {/* Segment download progress */}
+          {segmentDownloadProgress && (
+            <div className="p-2 border-b border-[var(--ctp-overlay)]">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[var(--ctp-text)]">{segmentDownloadProgress.l}</span>
+                <div className="flex-1 bg-[var(--ctp-surface)] rounded-full h-1.5">
+                  <div
+                    className="bg-[var(--ctp-mauve)] h-1.5 rounded-full transition-all"
+                    style={{ width: `${segmentDownloadProgress.p}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
-      {/* Subtitle Editor */}
-      <SubtitleEditor
-        segment={selectedSegment?.type === 'subtitle' ? selectedSegment : null}
-        onUpdate={patch => {
-          if (selectedSegmentId && subtitleTrack) {
-            handleUpdateSegment(subtitleTrack.id, selectedSegmentId, patch)
-          }
-        }}
-        onDelete={handleDeleteSegment}
-        onAddNew={handleAddNewSegment}
-      />
-
-      {/* Marker List Panel */}
-      <MarkerList
-        markers={markers}
-        currentTime={currentTime}
-        duration={duration}
-        onSeek={seek}
-        onAddMarker={() => handleAddMarker()}
-        onDeleteMarker={handleDeleteMarker}
-        onUpdateMarker={handleUpdateMarker}
-      />
-
-      {/* Media Library Panel */}
-      <MediaLibrary
-        open={showMediaLibrary}
-        onClose={() => setShowMediaLibrary(false)}
-        onSelect={handleSelectMedia}
-        assets={mediaAssets.map(a => ({
-          ...a,
-          original_filename: a.filename,
-          asset_type: a.type === 'video' ? 'video' : 'image' as const,
-        }))}
-        onUpload={handleUploadMedia}
-      />
-
-      {/* Keyboard Shortcuts Modal */}
-      <KeyboardShortcutsModal open={shortcutsOpen} onClose={closeShortcuts} />
-    </div>
+          {/* Timeline */}
+          <div className="flex-1 overflow-hidden">
+            <OpenCutTimeline
+              tracks={tracks}
+              duration={duration}
+              currentTime={currentTime}
+              onSeek={seek}
+              onSelectSegment={(id, mode) => select(id ?? '', mode ?? 'replace')}
+              onUpdateSegment={handleUpdateSegment}
+              onDeleteSegment={(trackId, segmentId) => {
+                clearSelection()
+                pushUndo()
+                deleteSegment(trackId, segmentId)
+                setHasUnsavedChanges(true)
+              }}
+            />
+          </div>
+        </div>
+      }
+    />
   )
 }

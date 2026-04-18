@@ -1,75 +1,74 @@
-import { useMemo, useState } from 'react'
-import type { Marker } from '../panels/MarkerList'
+import React, { useMemo, useState, useCallback } from 'react'
 
-interface Props {
+export interface Marker {
+  id: string
+  time: number
+  label?: string
+  color?: string
+}
+
+interface OpenCutMarkerTrackProps {
   markers: Marker[]
-  pxPerSecond: number
+  zoom: number
   duration: number
   currentTime: number
   onSeek: (time: number) => void
   onAddMarker: (time: number) => void
-  onDeleteMarker: (markerId: string) => void
-  onUpdateMarker: (markerId: string, patch: Partial<Marker>) => void
+  onDeleteMarker: (id: string) => void
+  onUpdateMarker: (id: string, patch: Partial<Marker>) => void
 }
 
-export function TimelineMarkerTrack({
+export function OpenCutMarkerTrack({
   markers,
-  pxPerSecond,
+  zoom,
   duration,
   currentTime,
   onSeek,
   onAddMarker,
   onDeleteMarker,
   onUpdateMarker,
-}: Props) {
+}: OpenCutMarkerTrackProps) {
   const sortedMarkers = useMemo(() => {
     return [...markers].sort((a, b) => a.time - b.time)
   }, [markers])
 
-  const handleTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleTrackClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - rect.left
-    const time = Math.max(0, Math.min(duration, x / pxPerSecond))
+    const time = Math.max(0, Math.min(duration, x / zoom))
+    onSeek(time)
+  }, [zoom, duration, onSeek])
 
-    // Check if clicking near an existing marker
-    const clickedMarker = sortedMarkers.find(
-      m => Math.abs((m.time * pxPerSecond) - x) < 10
-    )
-
-    if (clickedMarker) {
-      onSeek(clickedMarker.time)
-    } else {
-      onSeek(time)
-    }
-  }
-
-  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleDoubleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.stopPropagation()
     const rect = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - rect.left
-    const time = Math.max(0, Math.min(duration, x / pxPerSecond))
+    const time = Math.max(0, Math.min(duration, x / zoom))
     onAddMarker(time)
-  }
+  }, [zoom, duration, onAddMarker])
 
   return (
-    <div className="flex">
+    <div
+      className="flex h-10 border-b border-[var(--ctp-overlay)] bg-[var(--ctp-surface)]/95 backdrop-blur"
+      onDoubleClick={handleDoubleClick}
+    >
       {/* Track label */}
-      <div className="w-48 flex-shrink-0 flex items-center gap-2 px-2 py-2 bg-[var(--ctp-surface)] border-r border-b border-[var(--ctp-overlay)]">
-        <div className="w-6 h-6 rounded flex items-center justify-center bg-[rgba(137,180,250,0.2)] border border-[#89b4fa]">
-          <svg className="w-3.5 h-3.5 text-[#89b4fa]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <div
+        className="w-[60px] flex-shrink-0 flex items-center px-2 border-r border-[var(--ctp-overlay)] bg-[var(--ctp-surface)]"
+        onClick={handleTrackClick}
+      >
+        <div className="w-5 h-5 rounded flex items-center justify-center bg-[rgba(137,180,250,0.2)] border border-[var(--ctp-blue)]">
+          <svg className="w-3 h-3 text-[var(--ctp-blue)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
           </svg>
         </div>
-        <span className="text-xs font-medium text-[var(--ctp-text)]">Markers</span>
       </div>
 
       {/* Marker track area */}
       <div
-        className="flex-1 h-10 bg-[var(--ctp-surface-1)] border-b border-[var(--ctp-overlay)] relative cursor-pointer"
+        className="flex-1 relative cursor-pointer overflow-hidden"
         onClick={handleTrackClick}
-        onDoubleClick={handleDoubleClick}
-        role="application"
-        aria-label="Marker track. Click to seek, double-click to add marker."
+        style={{ width: Math.max(duration * zoom, 1000) - 60 }}
       >
         {/* Grid lines */}
         <div className="absolute inset-0 pointer-events-none">
@@ -79,7 +78,7 @@ export function TimelineMarkerTrack({
               className={`absolute top-0 bottom-0 w-px ${
                 i % 5 === 0 ? 'bg-[var(--ctp-overlay)]' : 'bg-[var(--ctp-overlay)] opacity-30'
               }`}
-              style={{ left: i * pxPerSecond }}
+              style={{ left: i * zoom }}
               aria-hidden="true"
             />
           ))}
@@ -90,7 +89,8 @@ export function TimelineMarkerTrack({
           <MarkerIndicator
             key={marker.id}
             marker={marker}
-            pxPerSecond={pxPerSecond}
+            zoom={zoom}
+            duration={duration}
             currentTime={currentTime}
             onClick={() => onSeek(marker.time)}
             onDelete={() => onDeleteMarker(marker.id)}
@@ -104,22 +104,21 @@ export function TimelineMarkerTrack({
 
 interface MarkerIndicatorProps {
   marker: Marker
-  pxPerSecond: number
+  zoom: number
+  duration: number
   currentTime: number
   onClick: () => void
   onDelete: () => void
   onUpdate: (patch: Partial<Marker>) => void
 }
 
-function MarkerIndicator({ marker, pxPerSecond, currentTime, onClick, onDelete, onUpdate }: MarkerIndicatorProps) {
-  const [isEditing, setIsEditing] = useState(false)
-  const [editLabel, setEditLabel] = useState(marker.label)
+function MarkerIndicator({ marker, zoom, duration, currentTime, onClick, onDelete, onUpdate }: MarkerIndicatorProps) {
   const [isDragging, setIsDragging] = useState(false)
 
   const isCurrent = Math.abs(marker.time - currentTime) < 0.1
-  const left = marker.time * pxPerSecond
+  const left = marker.time * zoom
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
     setIsDragging(true)
 
@@ -128,8 +127,8 @@ function MarkerIndicator({ marker, pxPerSecond, currentTime, onClick, onDelete, 
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const dx = moveEvent.clientX - startX
-      const dt = dx / pxPerSecond
-      const newTime = Math.max(0, Math.min(startTime + dt, 3600)) // Max 1 hour
+      const dt = dx / zoom
+      const newTime = Math.max(0, Math.min(startTime + dt, duration))
       onUpdate({ time: newTime })
     }
 
@@ -141,14 +140,7 @@ function MarkerIndicator({ marker, pxPerSecond, currentTime, onClick, onDelete, 
 
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }
-
-  const handleSubmit = () => {
-    if (editLabel.trim()) {
-      onUpdate({ label: editLabel.trim() })
-    }
-    setIsEditing(false)
-  }
+  }, [marker.time, zoom, onUpdate, duration])
 
   return (
     <div
@@ -160,7 +152,6 @@ function MarkerIndicator({ marker, pxPerSecond, currentTime, onClick, onDelete, 
       }}
       role="button"
       tabIndex={0}
-      aria-label={`Marker: ${marker.label || 'Unnamed'} at ${marker.time.toFixed(1)}s`}
     >
       {/* Marker flag */}
       <div
@@ -170,7 +161,7 @@ function MarkerIndicator({ marker, pxPerSecond, currentTime, onClick, onDelete, 
             : 'hover:scale-110'
         } ${isDragging ? 'opacity-80' : ''}`}
         style={{
-          backgroundColor: marker.color,
+          backgroundColor: marker.color || 'var(--ctp-blue)',
           left: 6,
         }}
         onMouseDown={handleMouseDown}
@@ -179,36 +170,12 @@ function MarkerIndicator({ marker, pxPerSecond, currentTime, onClick, onDelete, 
       {/* Marker label (shown on hover or when current) */}
       {(isCurrent || isDragging) && (
         <div
-          className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded bg-[var(--ctp-base)] border border-[var(--ctp-overlay)] shadow-lg whitespace-nowrap z-10"
+          className="absolute -top-6 left-1/2 -translate-x-1/2 px-2 py-1 rounded bg-[var(--ctp-base)] border border-[var(--ctp-overlay)] shadow-lg whitespace-nowrap z-10"
           style={{ left: 6 }}
         >
-          {isEditing ? (
-            <input
-              type="text"
-              value={editLabel}
-              onChange={(e) => setEditLabel(e.target.value)}
-              onBlur={handleSubmit}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSubmit()
-                if (e.key === 'Escape') {
-                  setEditLabel(marker.label)
-                  setIsEditing(false)
-                }
-              }}
-              className="text-xs bg-transparent border-none outline-none text-[var(--ctp-text)] w-24"
-              autoFocus
-            />
-          ) : (
-            <span
-              className="text-xs text-[var(--ctp-text)] cursor-pointer"
-              onDoubleClick={(e) => {
-                e.stopPropagation()
-                setIsEditing(true)
-              }}
-            >
-              {marker.label || formatTime(marker.time)}
-            </span>
-          )}
+          <span className="text-xs text-[var(--ctp-text)]">
+            {marker.label || formatTime(marker.time)}
+          </span>
         </div>
       )}
 
@@ -218,11 +185,11 @@ function MarkerIndicator({ marker, pxPerSecond, currentTime, onClick, onDelete, 
           e.stopPropagation()
           onDelete()
         }}
-        className="absolute -top-6 left-1/2 -translate-x-1/2 p-1 rounded bg-[var(--ctp-red)] text-[var(--ctp-base)] opacity-0 group-hover:opacity-100 transition-opacity"
+        className="absolute -top-5 left-1/2 -translate-x-1/2 p-1 rounded bg-[var(--ctp-red)] text-[var(--ctp-base)] opacity-0 group-hover:opacity-100 transition-opacity"
         style={{ left: 6 }}
         aria-label="Delete marker"
       >
-        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
         </svg>
       </button>
@@ -231,7 +198,7 @@ function MarkerIndicator({ marker, pxPerSecond, currentTime, onClick, onDelete, 
       <div
         className="absolute top-3 bottom-0 w-px pointer-events-none"
         style={{
-          backgroundColor: marker.color,
+          backgroundColor: marker.color || 'var(--ctp-blue)',
           opacity: isCurrent ? 0.6 : 0.3,
           left: 7.5,
         }}
