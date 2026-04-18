@@ -5,7 +5,8 @@
 services:
   momiji-clipper:
     build:
-      context: .
+      context: ./backend
+      dockerfile: Dockerfile
       args:
         BASE_IMAGE: python:3.10-slim
     container_name: momiji-clipper
@@ -26,8 +27,8 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: Dockerfile.frontend
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: momiji-frontend
     ports:
       - "7860:80"
