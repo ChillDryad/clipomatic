@@ -10,18 +10,18 @@ Provides:
 - Authentication helpers
 """
 
+import os
+import sys
+
 # Ensure backend root is on sys.path for bare module imports (api, db, auth, etc.)
-import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import asyncio
 import base64
 import hashlib
 import json
-import os
 import secrets
 import shutil
-import sys
 import tempfile
 import time
 from datetime import datetime, timedelta
