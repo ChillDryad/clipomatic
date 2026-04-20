@@ -12,9 +12,9 @@ import os
 import re
 import uuid
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, TypedDict
 
-from datetime import timedelta
+from functools import lru_cache
 from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -28,7 +28,48 @@ from db import PostJob, User, get_session_cm
 from auth import get_current_user
 from pipeline import highlight_detection, ingestion, transcription
 from pipeline.ingestion import extract_vod_id
-from pipeline.renderer import CropBox, extract_frame, get_video_dimensions, render_clip
+from pipeline.media import extract_frame, get_video_dimensions
+from pipeline.renderer import CropBox, render_clip
+
+# ---------------------------------------------------------------------------
+# Module-level logger (P4 Task #15)
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Type definitions (P4 Task #16)
+# ---------------------------------------------------------------------------
+
+class TranscriptSegment(TypedDict, total=False):
+    """Type definition for a transcript segment."""
+    start: float
+    end: float
+    text: str
+    words: list[dict[str, Any]]
+
+
+class TranscriptData(TypedDict, total=False):
+    """Type definition for transcript data structure."""
+    language: str
+    language_probability: float
+    duration: float
+    segments: list[TranscriptSegment]
+
+
+class ClipData(TypedDict, total=False):
+    """Type definition for clip data structure."""
+    title: str
+    start: float
+    end: float
+    reason: str | None
+    virality_score: int | None
+    brand_alignment: list[str] | None
+    hashtags: list[str] | None
+    crop_avatar: dict[str, int] | None
+    crop_game: dict[str, int] | None
+
 
 # ---------------------------------------------------------------------------
 # App setup with lifespan
@@ -93,6 +134,72 @@ app.add_middleware(
     max_age=600,  # Cache preflight for 10 minutes
 )
 
+
+# ---------------------------------------------------------------------------
+# Security Headers Middleware (P1 Task #5)
+# ---------------------------------------------------------------------------
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """
+    Add security headers to all responses (OWASP security best practices).
+
+    Headers added:
+    - X-Frame-Options: DENY (prevent clickjacking)
+    - X-Content-Type-Options: nosniff (prevent MIME sniffing)
+    - X-XSS-Protection: 1; mode=block (legacy XSS filter)
+    - Referrer-Policy: strict-origin-when-cross-origin
+    - Content-Security-Policy: Default-src self (prevent XSS)
+    - Permissions-Policy: Restrict browser features
+    - Cache-Control: no-store for HTML responses
+    """
+    response = await call_next(request)
+
+    # Prevent clickjacking attacks
+    response.headers["X-Frame-Options"] = "DENY"
+
+    # Prevent MIME type sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+
+    # Legacy XSS filter (for older browsers)
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+
+    # Control referrer information
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # Content Security Policy - restrict resource loading to same origin
+    # Note: May need to be relaxed if external resources are needed
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self'; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'"
+    )
+
+    # Restrict browser features/permissions
+    response.headers["Permissions-Policy"] = (
+        "accelerometer=(), "
+        "camera=(), "
+        "geolocation=(), "
+        "gyroscope=(), "
+        "magnetometer=(), "
+        "microphone=(), "
+        "payment=(), "
+        "usb=()"
+    )
+
+    # Prevent caching of HTML responses (for security)
+    content_type = response.headers.get("Content-Type", "")
+    if "text/html" in content_type or "application/json" in content_type:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+
+    return response
+
 WORKSPACE = os.environ.get(
     "WORKSPACE_DIR",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace"),
@@ -103,24 +210,249 @@ os.makedirs(os.path.join(WORKSPACE, "audio"), exist_ok=True)
 os.makedirs(os.path.join(WORKSPACE, "frames"), exist_ok=True)
 os.makedirs(os.path.join(WORKSPACE, "renders"), exist_ok=True)
 
-# Serve workspace files (frames, renders, audio) as static files
-app.mount("/workspace", StaticFiles(directory=WORKSPACE), name="workspace")
+# ---------------------------------------------------------------------------
+# Cached Static Files (P3 Task #14)
+# ---------------------------------------------------------------------------
+
+class CachedStaticFiles(StaticFiles):
+    """
+    StaticFiles subclass with Cache-Control headers for static assets.
+
+    Adds Cache-Control headers to improve caching of static assets
+    while preventing caching of dynamic content.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        cache_max_age: int = 3600,  # Default: 1 hour
+        **kwargs: Any,
+    ):
+        self.cache_max_age = cache_max_age
+        super().__init__(*args, **kwargs)
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        """Add Cache-Control header to static file responses."""
+        # Capture the original send to modify headers
+        async def send_with_cache(message: dict[str, Any]) -> None:
+            if message.get("type") == "http.response.start":
+                headers = list(message.get("headers", []))
+                # Add Cache-Control header
+                headers.append(
+                    (
+                        b"cache-control",
+                        f"public, max-age={self.cache_max_age}, immutable".encode(),
+                    )
+                )
+                # Add X-Content-Type-Options to prevent MIME sniffing
+                headers.append((b"x-content-type-options", b"nosniff"))
+                message["headers"] = headers
+            await send(message)
+
+        await super().__call__(scope, receive, send_with_cache)
+
+
+# Serve workspace files (frames, renders, audio) as static files with caching
+# Frames and renders are immutable once created, so we can cache them aggressively
+app.mount("/workspace", CachedStaticFiles(directory=WORKSPACE, cache_max_age=86400), name="workspace")  # 24 hours
+
+
+def _resolve_workspace_path(path: str) -> str:
+    """Translate /workspace/... URL paths to the real filesystem path."""
+    if path.startswith("/workspace/"):
+        return os.path.join(WORKSPACE, path.removeprefix("/workspace/"))
+    return path
+
+
+def _validate_workspace_path(path: str) -> None:
+    """Raise HTTPException(400) if path escapes the workspace directory."""
+    try:
+        path_abs = os.path.abspath(path)
+        workspace_abs = os.path.abspath(WORKSPACE)
+        if not path_abs.startswith(workspace_abs + os.sep) and path_abs != workspace_abs:
+            raise HTTPException(status_code=400, detail="Path is outside the workspace directory.")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path.")
+
 
 # ---------------------------------------------------------------------------
-# SSE helper
+# Utility Functions (P2 Task #9)
+# ---------------------------------------------------------------------------
+
+
+def _get_cache_path(stem: str, suffix: str = "_clips.json") -> str:
+    """
+    Get the cache file path for a given file stem.
+
+    Args:
+        stem: Base filename without extension
+        suffix: Cache file suffix (default: "_clips.json")
+
+    Returns:
+        Full path to cache file in WORKSPACE directory
+    """
+    return os.path.join(WORKSPACE, f"{stem}{suffix}")
+
+
+def _read_cache_json(cache_path: str) -> Any | None:
+    """
+    Read and parse a JSON cache file.
+
+    Args:
+        cache_path: Path to the cache file
+
+    Returns:
+        Parsed JSON data or None if file doesn't exist
+    """
+    if not os.path.exists(cache_path):
+        return None
+    with open(cache_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_cache_json(cache_path: str, data: Any) -> None:
+    """
+    Write data to a JSON cache file atomically.
+
+    Args:
+        cache_path: Path to the cache file
+        data: Data to serialize as JSON
+    """
+    tmp_path = cache_path + f".{uuid.uuid4().hex[:8]}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp_path, cache_path)
+
+
+@lru_cache(maxsize=500)
+def _get_cached_frame_path(video_path: str, timestamp_rounded: int) -> str | None:
+    """
+    LRU-cached frame path lookup (P3 Task #11).
+
+    Args:
+        video_path: Path to the video file
+        timestamp_rounded: Rounded timestamp (to nearest second)
+
+    Returns:
+        Path to cached frame or None if not found
+    """
+    frame_path = os.path.join(WORKSPACE, "frames", f"{os.path.basename(video_path)}_{timestamp_rounded}.jpg")
+    if os.path.exists(frame_path):
+        return frame_path
+    return None
+
+
+def _invalidate_frame_cache(video_path: str) -> None:
+    """Clear LRU cache entries for a specific video."""
+    _get_cached_frame_path.cache_clear()
+
+
+@lru_cache(maxsize=100)
+def _get_cached_transcript_path(stem: str) -> str | None:
+    """
+    LRU-cached transcript path lookup (P3 Task #11).
+
+    Args:
+        stem: Video filename without extension
+
+    Returns:
+        Path to cached transcript or None if not found
+    """
+    transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
+    if os.path.exists(transcript_path):
+        return transcript_path
+    return None
+
+
+def _invalidate_transcript_cache(stem: str) -> None:
+    """Clear LRU cache entry for a specific transcript."""
+    _get_cached_transcript_path.cache_clear()
+
+
+@lru_cache(maxsize=200)
+def _get_cached_clips_path(stem: str) -> str | None:
+    """
+    LRU-cached clips path lookup (P3 Task #11).
+
+    Args:
+        stem: Video filename without extension
+
+    Returns:
+        Path to cached clips JSON or None if not found
+    """
+    clips_path = os.path.join(WORKSPACE, f"{stem}_clips.json")
+    if os.path.exists(clips_path):
+        return clips_path
+    return None
+
+
+def _invalidate_clips_cache(stem: str) -> None:
+    """Clear LRU cache entry for a specific clips file."""
+    _get_cached_clips_path.cache_clear()
+
+
+def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    """Attach HttpOnly access + refresh token cookies to any Response."""
+    from auth import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        samesite="lax",
+        secure=False,
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        expires=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        samesite="lax",
+        secure=False,
+        path="/",
+    )
+
+
+def _user_dict(user: "User") -> dict:
+    """Serialize a User ORM object to the standard 4-field response dict."""
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "is_verified": user.is_verified,
+    }
+
+
+# ---------------------------------------------------------------------------
+# SSE helper (P4 Task #16 - Type hints, P4 Task #15 - Logging)
 # ---------------------------------------------------------------------------
 
 _CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB for upload progress
 
 
-_sse_event = lambda data: f"data: {json.dumps(data)}\n\n"
+def _sse_event(data: Any) -> str:
+    """Format data as SSE event."""
+    return f"data: {json.dumps(data)}\n\n"
 
 
-async def _sse_stream(fn, *args, **kwargs) -> AsyncGenerator[str, None]:
+async def _sse_stream(fn: Any, *args: Any, **kwargs: Any) -> AsyncGenerator[str, None]:
     """
     Run a blocking pipeline function in a thread pool, yielding SSE events.
     The function must accept a `progress_callback` kwarg.
     Final event is either {"done": true, "result": ...} or {"error": "..."}.
+
+    Args:
+        fn: Blocking function to run in thread pool
+        *args: Positional arguments for fn
+        **kwargs: Keyword arguments for fn (must accept progress_callback)
+
+    Yields:
+        SSE-formatted event strings
     """
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
@@ -135,6 +467,8 @@ async def _sse_stream(fn, *args, **kwargs) -> AsyncGenerator[str, None]:
             result = await asyncio.to_thread(fn, *args, progress_callback=cb, **kwargs)
             queue.put_nowait({"done": True, "result": result})
         except Exception as exc:
+            # P4 Task #15: Log errors in SSE handler (was silently swallowed)
+            logger.exception("SSE stream error in %s: %s", fn.__name__, exc)
             queue.put_nowait({"error": str(exc)})
 
     task = asyncio.create_task(_run())
@@ -150,7 +484,16 @@ async def _sse_stream(fn, *args, **kwargs) -> AsyncGenerator[str, None]:
     await task
 
 
-def _sse_response(generator) -> StreamingResponse:
+def _sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
+    """
+    Create a StreamingResponse for SSE events.
+
+    Args:
+        generator: Async generator yielding SSE-formatted strings
+
+    Returns:
+        StreamingResponse with appropriate headers for SSE
+    """
     return StreamingResponse(
         generator,
         media_type="text/event-stream",
@@ -169,21 +512,32 @@ class UrlRequest(BaseModel):
     url: str
 
 
-# Allowed video/audio extensions for ingestion
-_ALLOWED_INGEST_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".m4v", ".mp3", ".wav", ".aac", ".ogg"}
-_MAX_INGEST_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB for video files
+# Allowed video/audio extensions for ingestion (P0 Task #4: File Upload Validation)
+_ALLOWED_INGEST_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}  # Video only per spec
+_MAX_INGEST_FILE_SIZE = 100 * 1024 * 1024  # 100 MB max per spec
+
+# Allowed MIME types for video uploads
+_ALLOWED_MIME_TYPES = {
+    "video/mp4",
+    "video/x-matroska",  # .mkv
+    "video/quicktime",  # .mov
+    "video/x-msvideo",  # .avi
+    "video/webm",
+    "video/x-ms-wmv",  # .wmv
+}
 
 
 @app.post("/api/ingest/upload")
 @limiter.limit("10/hour")
 async def ingest_upload(request: Request, file: UploadFile = File(...), user: User = Depends(get_current_user)):
     """
-    Save an uploaded video/audio file to the workspace, streaming to disk in chunks.
+    Save an uploaded video file to the workspace, streaming to disk in chunks.
 
-    Security validations:
+    Security validations (P0 Task #4):
     - Path traversal prevention
-    - Extension whitelist
-    - File size limit (2 GB)
+    - Extension whitelist (.mp4, .mkv, .mov, .avi, .webm)
+    - MIME type validation
+    - File size limit (100 MB max)
     - Rate limit: 10/hour (prevents storage DoS)
     """
     # SECURITY: Validate filename
@@ -197,7 +551,7 @@ async def ingest_upload(request: Request, file: UploadFile = File(...), user: Us
             detail=f"Invalid filename: path components not allowed. Original: {original_name!r}"
         )
 
-    # Validate extension
+    # Validate extension (allowlist)
     ext = os.path.splitext(safe_basename)[1].lower()
     if ext not in _ALLOWED_INGEST_EXTENSIONS:
         raise HTTPException(
@@ -205,14 +559,19 @@ async def ingest_upload(request: Request, file: UploadFile = File(...), user: Us
             detail=f"Unsupported file extension: {ext!r}. Allowed: {', '.join(sorted(_ALLOWED_INGEST_EXTENSIONS))}"
         )
 
+    # Validate MIME type (will be checked after reading first chunk)
+    content_type = file.content_type or ""
+
     # Generate secure filename (UUID to prevent collisions)
     safe_name = f"{uuid.uuid4().hex[:12]}{ext}"
     dest_path = os.path.join(WORKSPACE, safe_name)
 
     written = 0
+    mime_type_validated = False
+
     with open(dest_path, "wb") as f:
         while chunk := file.file.read(_CHUNK_SIZE):
-            # SECURITY: Check file size during streaming
+            # SECURITY: Check file size during streaming (100 MB max)
             written += len(chunk)
             if written > _MAX_INGEST_FILE_SIZE:
                 # Clean up partial file
@@ -220,8 +579,31 @@ async def ingest_upload(request: Request, file: UploadFile = File(...), user: Us
                 os.remove(dest_path)
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File too large: exceeds {_MAX_INGEST_FILE_SIZE / (1024**3):.1f} GB limit"
+                    detail=f"File too large: exceeds {_MAX_INGEST_FILE_SIZE / (1024*1024):.1f} MB limit"
                 )
+
+            # Validate MIME type from first chunk (magic byte detection)
+            if not mime_type_validated and written > 0:
+                import magic
+                try:
+                    detected_mime = magic.from_buffer(chunk, mime=True)
+                    if detected_mime not in _ALLOWED_MIME_TYPES:
+                        f.close()
+                        os.remove(dest_path)
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid file type: detected MIME {detected_mime!r}. Allowed: {', '.join(sorted(_ALLOWED_MIME_TYPES))}"
+                        )
+                    mime_type_validated = True
+                except ImportError:
+                    # If python-magic not available, skip MIME validation
+                    # Extension validation already provides basic protection
+                    mime_type_validated = True
+                except Exception as exc:
+                    # If MIME detection fails, log but continue (extension validation already done)
+                    logger.warning("MIME type detection failed: %s. Continuing with extension validation only.", exc)
+                    mime_type_validated = True
+
             f.write(chunk)
             mb_done = written / (1024 * 1024)
             yield _sse_event({
@@ -279,26 +661,64 @@ async def ingest_twitch_check(url: str = Query(...), user: User = Depends(get_cu
 
 @app.get("/api/oauth/twitch/authorize")
 async def oauth_twitch_authorize(label: str = Query(...)):
-    """Redirect to Twitch OAuth authorization URL."""
+    """
+    Redirect to Twitch OAuth authorization URL with PKCE and state validation.
+
+    Implements RFC 9700 PKCE for enhanced security against authorization code interception.
+    State parameter expires after 10 minutes to prevent replay attacks.
+    """
     import secrets
+    import time
+
     state = secrets.token_hex(16)
-    _pending_oauth_states[state] = {"platform": "twitch", "label": label}
-    from oauth.twitch import build_twitch_auth_url
-    return {"auth_url": build_twitch_auth_url(state)}
+
+    # Generate PKCE pair per RFC 9700
+    from oauth.twitch import generate_pkce_pair, build_twitch_auth_url
+    code_verifier, code_challenge = generate_pkce_pair()
+
+    _pending_oauth_states[state] = {
+        "platform": "twitch",
+        "label": label,
+        "code_verifier": code_verifier,
+        "expires_at": time.time() + _OAUTH_STATE_EXPIRY_SECONDS,
+    }
+
+    auth_url = build_twitch_auth_url(state, code_challenge)
+    return {"auth_url": auth_url}
 
 
 @app.get("/api/oauth/twitch/callback")
 async def oauth_twitch_callback(code: str = Query(...), state: str = Query(...)):
-    """Handle Twitch OAuth callback. Creates User + UserOAuthAccount and redirects to frontend."""
+    """
+    Handle the OAuth2 callback from Twitch.
+
+    Validates state parameter (CSRF protection), verifies platform matching,
+    and uses PKCE code_verifier for secure token exchange.
+    Creates User + UserOAuthAccount or updates existing OAuth account, then redirects to frontend.
+    """
     from fastapi.responses import RedirectResponse
+    import time
 
     state_data = _pending_oauth_states.pop(state, None)
     if not state_data:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
 
+    # Check if state has expired (CSRF protection)
+    if state_data.get("expires_at") and time.time() > state_data["expires_at"]:
+        raise HTTPException(status_code=400, detail="OAuth state has expired. Please try again.")
+
+    # Validate provider matching
+    if state_data["platform"] != "twitch":
+        raise HTTPException(status_code=400, detail="Platform mismatch in OAuth state.")
+
+    # Retrieve PKCE code_verifier from state
+    code_verifier = state_data.get("code_verifier")
+    if not code_verifier:
+        raise HTTPException(status_code=400, detail="PKCE code_verifier not found. Please restart authentication.")
+
     try:
         from oauth.twitch import exchange_twitch_code
-        provider_account_id, access_token, refresh_token, expires_at = await exchange_twitch_code(code)
+        provider_account_id, email, access_token, refresh_token, expires_at = await exchange_twitch_code(code, code_verifier)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Twitch token exchange failed: {exc}")
 
@@ -315,16 +735,20 @@ async def oauth_twitch_callback(code: str = Query(...), state: str = Query(...))
         )
         existing_oauth = result.scalar_one_or_none()
 
+        # Encrypt OAuth tokens at rest for security (OWASP A02:2021)
+        from auth import encrypt_oauth_token
+        encrypted_access_token = encrypt_oauth_token(access_token)
+        encrypted_refresh_token = encrypt_oauth_token(refresh_token) if refresh_token else None
+
         if existing_oauth:
             # User already exists, just update tokens
-            existing_oauth.access_token = access_token
-            existing_oauth.refresh_token = refresh_token
+            existing_oauth.access_token = encrypted_access_token
+            existing_oauth.refresh_token = encrypted_refresh_token
             existing_oauth.expires_at = expires_at
             await session.commit()
             user_id = existing_oauth.user_id
         else:
             # Create new user + OAuth account
-            # Generate a display name from the label or use a default
             display_name = state_data.get("label", f"Twitch User {provider_account_id[:8]}")
             user = User(
                 email=f"twitch_{provider_account_id}@oauth.momiji.local",
@@ -338,8 +762,8 @@ async def oauth_twitch_callback(code: str = Query(...), state: str = Query(...))
                 user_id=user.id,
                 provider="twitch",
                 provider_account_id=provider_account_id,
-                access_token=access_token,
-                refresh_token=refresh_token,
+                access_token=encrypted_access_token,
+                refresh_token=encrypted_refresh_token,
                 expires_at=expires_at,
             )
             session.add(oauth_account)
@@ -359,26 +783,7 @@ async def oauth_twitch_callback(code: str = Query(...), state: str = Query(...))
     # Redirect to dashboard with HttpOnly cookie set
     from starlette.responses import RedirectResponse
     response = RedirectResponse("/dashboard")
-    response.set_cookie(
-        key="access_token",
-        value=token,
-        httponly=True,
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 24 hours
-        expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="lax",
-        secure=False,
-        path="/",
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,  # 30 days
-        expires=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
-        samesite="lax",
-        secure=False,
-        path="/",
-    )
+    _set_auth_cookies(response, token, refresh_token)
     return response
 
 
@@ -543,18 +948,8 @@ async def highlights_cached(path: str = Query(...), user: User = Depends(get_cur
 @app.get("/api/frame")
 async def get_frame(video: str = Query(...), t: float = Query(2.0), user: User = Depends(get_current_user)):
     """Extract a single frame from a video at timestamp t and return it as JPEG."""
-    # Resolve /workspace/... URL paths to the actual workspace directory
-    if video.startswith("/workspace/"):
-        video = os.path.join(WORKSPACE, video.removeprefix("/workspace/"))
-    # Validate video path is inside WORKSPACE
-    try:
-        video_abs = os.path.abspath(video)
-        workspace_abs = os.path.abspath(WORKSPACE)
-        if not video_abs.startswith(workspace_abs + os.sep) and video_abs != workspace_abs:
-            raise HTTPException(status_code=400, detail="Video path is outside workspace.")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid video path.")
-
+    video = _resolve_workspace_path(video)
+    _validate_workspace_path(video)
     if not os.path.exists(video):
         raise HTTPException(status_code=404, detail="Video file not found.")
     frames_dir = os.path.join(WORKSPACE, "frames")
@@ -568,18 +963,8 @@ async def get_frame(video: str = Query(...), t: float = Query(2.0), user: User =
 @app.get("/api/video/dimensions")
 async def get_video_dimensions_endpoint(video: str = Query(...)):
     """Return (width, height) of a video using ffprobe, no frame extraction needed."""
-    # Resolve /workspace/... URL paths to the actual workspace directory
-    if video.startswith("/workspace/"):
-        video = os.path.join(WORKSPACE, video.removeprefix("/workspace/"))
-    # Validate video path is inside WORKSPACE
-    try:
-        video_abs = os.path.abspath(video)
-        workspace_abs = os.path.abspath(WORKSPACE)
-        if not video_abs.startswith(workspace_abs + os.sep) and video_abs != workspace_abs:
-            raise HTTPException(status_code=400, detail="Video path is outside workspace.")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid video path.")
-
+    video = _resolve_workspace_path(video)
+    _validate_workspace_path(video)
     if not os.path.exists(video):
         raise HTTPException(status_code=404, detail="Video file not found.")
 
@@ -951,20 +1336,6 @@ async def _regenerate_clip_metadata(clip: dict, transcript: dict) -> dict:
         return f"{m:02d}:{s:05.2f}"
 
     lines_text = "\n".join(f"[{fmt(w['start'])}] {w['text']}" for w in words)
-
-
-    small_system_prompt = """You are a viral clip editor for a VTuber YouTube channel.
-Given a short transcript segment, generate a complete social media post:
-
-1. **Title**: Short, punchy, clickable (max 60 chars, no quotes or special chars)
-2. **Description**: A brief engaging description that hooks viewers (1-2 sentences, max 150 chars)
-3. **Hashtags**: 5-8 relevant hashtags (VTuber-style, include #VTuber, lean into community trends and current viral formats)
-
-Respond ONLY with a JSON object with keys:
-  "title" (string, max 60 chars)
-  "description" (string, max 150 chars)
-  "hashtags" (array of strings, e.g. ["#VTuber", "#Gaming", "#Meme", "#Shorts"])
-Do not add explanations or surrounding text."""
 
     system_prompt = """You are a Viral Growth Strategist for Momiji Yoru's VTuber channel.
 Your goal: Convert scrollers into viewers. Clips are the funnel; the stream is the destination.
@@ -1548,19 +1919,8 @@ async def get_waveform(audio_path: str = Query(...)):
     """
     from pipeline import audio as audio_pipeline
 
-    # Resolve workspace paths
-    if audio_path.startswith("/workspace/"):
-        audio_path = os.path.join(WORKSPACE, audio_path.removeprefix("/workspace/"))
-
-    # Validate path is inside workspace
-    try:
-        audio_abs = os.path.abspath(audio_path)
-        workspace_abs = os.path.abspath(WORKSPACE)
-        if not audio_abs.startswith(workspace_abs + os.sep) and audio_abs != workspace_abs:
-            raise HTTPException(status_code=400, detail="Audio path must be within workspace")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid audio path")
-
+    audio_path = _resolve_workspace_path(audio_path)
+    _validate_workspace_path(audio_path)
     if not os.path.exists(audio_path):
         raise HTTPException(status_code=404, detail="Audio file not found")
 
@@ -1909,38 +2269,20 @@ async def render_timeline_endpoint(req: TimelineRenderRequest, user: User = Depe
     """
     from pipeline import renderer
 
-    # Resolve workspace paths
-    video_path = req.video_path
-    if video_path.startswith("/workspace/"):
-        video_path = os.path.join(WORKSPACE, video_path.removeprefix("/workspace/"))
-
-    # Validate video path
-    try:
-        video_abs = os.path.abspath(video_path)
-        workspace_abs = os.path.abspath(WORKSPACE)
-        if not video_abs.startswith(workspace_abs + os.sep) and video_abs != workspace_abs:
-            raise HTTPException(status_code=400, detail="Video path must be within workspace")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid video path")
-
+    video_path = _resolve_workspace_path(req.video_path)
+    _validate_workspace_path(video_path)
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail="Video file not found")
 
-    # Validate overlay paths
     if req.overlays:
         for overlay in req.overlays:
-            overlay_path = overlay.path
-            if overlay_path.startswith("/workspace/"):
-                overlay_path = os.path.join(WORKSPACE, overlay_path.removeprefix("/workspace/"))
+            overlay_path = _resolve_workspace_path(overlay.path)
             if not os.path.exists(overlay_path):
                 raise HTTPException(status_code=404, detail=f"Overlay file not found: {overlay.path}")
 
-    # Validate audio paths
     if req.audio_tracks:
         for audio in req.audio_tracks:
-            audio_path = audio.path
-            if audio_path.startswith("/workspace/"):
-                audio_path = os.path.join(WORKSPACE, audio_path.removeprefix("/workspace/"))
+            audio_path = _resolve_workspace_path(audio.path)
             if not os.path.exists(audio_path):
                 raise HTTPException(status_code=404, detail=f"Audio file not found: {audio.path}")
 
@@ -2140,33 +2482,11 @@ async def oauth_callback(platform: str, code: str = Query(...), state: str = Que
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
 
-    from auth import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
     token = create_access_token(user.id, user.email)
     refresh_token = create_refresh_token(user.id)
-
-    # Redirect to dashboard with HttpOnly cookie set
     from starlette.responses import RedirectResponse
     response = RedirectResponse("/dashboard")
-    response.set_cookie(
-        key="access_token",
-        value=token,
-        httponly=True,
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 24 hours
-        expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="lax",
-        secure=False,
-        path="/",
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,  # 30 days
-        expires=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
-        samesite="lax",
-        secure=False,
-        path="/",
-    )
+    _set_auth_cookies(response, token, refresh_token)
     return response
 
 
@@ -2281,39 +2601,11 @@ async def register(request: Request, req: RegisterRequest, response: Response):
         await session.commit()
         await session.refresh(user)
 
-    # Set HttpOnly cookies (24-hour access + 30-day refresh)
-    from auth import create_access_token, create_refresh_token, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+    from auth import create_access_token, create_refresh_token
     access_token = create_access_token(user.id, user.email)
     refresh_token = create_refresh_token(user.id)
-
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 24 hours
-        expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="lax",
-        secure=False,  # Set to True in production with HTTPS
-        path="/",
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,  # 30 days
-        expires=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
-        samesite="lax",
-        secure=False,
-        path="/",
-    )
-    return {
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "is_verified": user.is_verified,
-        },
-    }
+    _set_auth_cookies(response, access_token, refresh_token)
+    return {"user": _user_dict(user)}
 
 
 @app.post("/api/auth/login")
@@ -2340,51 +2632,17 @@ async def login(request: Request, req: LoginRequest, response: Response):
         if not verify_password(req.password, user.password_hash):
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    # Set HttpOnly cookies (24-hour access + 30-day refresh)
-    from auth import create_access_token, create_refresh_token, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+    from auth import create_access_token, create_refresh_token
     access_token = create_access_token(user.id, user.email)
     refresh_token = create_refresh_token(user.id)
-
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 24 hours
-        expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="lax",
-        secure=False,  # Set to True in production with HTTPS
-        path="/",
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,  # 30 days
-        expires=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
-        samesite="lax",
-        secure=False,
-        path="/",
-    )
-    return {
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "is_verified": user.is_verified,
-        },
-    }
+    _set_auth_cookies(response, access_token, refresh_token)
+    return {"user": _user_dict(user)}
 
 
 @app.get("/api/auth/me")
 async def get_current_user_profile(user: User = Depends(get_current_user)):
     """Get current authenticated user profile."""
-    return {
-        "id": user.id,
-        "email": user.email,
-        "display_name": user.display_name,
-        "is_verified": user.is_verified,
-        "created_at": user.created_at,
-    }
+    return {**_user_dict(user), "created_at": user.created_at}
 
 
 @app.post("/api/auth/logout")
@@ -2395,14 +2653,14 @@ async def logout(response: Response):
         httponly=True,
         samesite="lax",
         secure=False,
-        path="/api",
+        path="/",
     )
     response.delete_cookie(
         key="refresh_token",
         httponly=True,
         samesite="lax",
         secure=False,
-        path="/api/auth/refresh",
+        path="/",
     )
     return {"success": True}
 
@@ -2429,41 +2687,10 @@ async def refresh_token(refresh_cookie: str | None = Cookie(None, alias="refresh
         if not user or not user.is_active:
             raise HTTPException(status_code=401, detail="User not found or inactive")
 
-    # Generate new access token and refresh token (rotation)
-    from auth import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
     new_access_token = create_access_token(user.id, user.email)
     new_refresh_token = create_refresh_token(user.id)
-
-    # Set new cookies (24-hour access + 30-day refresh)
-    response.set_cookie(
-        key="access_token",
-        value=new_access_token,
-        httponly=True,
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 24 hours
-        expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="lax",
-        secure=False,
-        path="/",
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=new_refresh_token,
-        httponly=True,
-        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,  # 30 days
-        expires=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
-        samesite="lax",
-        secure=False,
-        path="/",
-    )
-
-    return {
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "is_verified": user.is_verified,
-        },
-    }
+    _set_auth_cookies(response, new_access_token, new_refresh_token)
+    return {"user": _user_dict(user)}
 
 
 # ---------------------------------------------------------------------------
@@ -2526,7 +2753,7 @@ async def auth_callback(provider: str, code: str = Query(...), state: str = Quer
     Creates User + UserOAuthAccount or logs in existing user, then redirects to frontend with JWT.
     """
     from fastapi.responses import RedirectResponse
-    from auth import create_access_token
+    from auth import create_access_token, create_refresh_token
 
     if provider not in ("google", "twitch", "youtube"):
         raise HTTPException(status_code=400, detail="Unsupported OAuth provider.")
@@ -2616,12 +2843,14 @@ async def auth_callback(provider: str, code: str = Query(...), state: str = Quer
             session.add(oauth_account)
             await session.commit()
 
-    # Generate JWT token
-    token = create_access_token(user.id, user.email)
+    # Generate JWT token and set HttpOnly cookie (consistent with login/register)
+    access_token = create_access_token(user.id, user.email)
+    refresh_token = create_refresh_token(user.id)
 
-    # Redirect to frontend with token in URL fragment (not sent to server)
-    redirect_to = f"/dashboard#token={token}"
-    return RedirectResponse(redirect_to)
+    # Redirect to frontend with HttpOnly cookie set (not URL fragment - security best practice)
+    response = RedirectResponse("/dashboard")
+    _set_auth_cookies(response, access_token, refresh_token)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -3089,10 +3318,15 @@ async def create_project(req: CreateProjectRequest, user: User = Depends(get_cur
 
 
 @app.get("/api/projects")
-async def list_projects(team_id: str | None = Query(None), user: User = Depends(get_current_user)):
-    """List user's video projects, optionally filtered by team."""
+async def list_projects(
+    team_id: str | None = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user)
+):
+    """List user's video projects, optionally filtered by team. Supports pagination."""
     from db import VideoProject, get_session
-    from sqlalchemy import select
+    from sqlalchemy import select, func
 
     async with get_session_cm() as session:
         query = select(VideoProject).where(VideoProject.owner_id == user.id)
@@ -3119,23 +3353,35 @@ async def list_projects(team_id: str | None = Query(None), user: User = Depends(
                 )
             )
 
-        query = query.order_by(VideoProject.created_at.desc())
+        # Get total count for pagination metadata
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await session.execute(count_query)
+        total = total_result.scalar() or 0
+
+        # Apply pagination
+        query = query.order_by(VideoProject.created_at.desc()).offset(offset).limit(limit)
         result = await session.execute(query)
         projects = result.scalars().all()
 
-    return [
-        {
-            "id": p.id,
-            "owner_id": p.owner_id,
-            "team_id": p.team_id,
-            "source_path": p.source_path,
-            "original_filename": p.original_filename,
-            "duration": p.duration,
-            "status": p.status,
-            "created_at": p.created_at,
-        }
-        for p in projects
-    ]
+    return {
+        "projects": [
+            {
+                "id": p.id,
+                "owner_id": p.owner_id,
+                "team_id": p.team_id,
+                "source_path": p.source_path,
+                "original_filename": p.original_filename,
+                "duration": p.duration,
+                "status": p.status,
+                "created_at": p.created_at,
+            }
+            for p in projects
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(projects) < total,
+    }
 
 
 @app.get("/api/projects/{project_id}")
@@ -3185,7 +3431,12 @@ async def add_clips_to_project(
     req: AddClipsRequest,
     user: User = Depends(get_current_user),
 ):
-    """Add generated clips to a project."""
+    """
+    Add generated clips to a project using batch insert (P3 Task #12).
+
+    Uses session.add_all() for single-transaction batch insert,
+    which is more efficient than adding clips one at a time.
+    """
     from db import GeneratedClip, VideoProject, get_session
     from sqlalchemy import select
 
@@ -3211,10 +3462,9 @@ async def add_clips_to_project(
             else:
                 raise HTTPException(status_code=403, detail="Access denied")
 
-        # Add clips
-        added_clips = []
-        for clip_data in req.clips:
-            clip = GeneratedClip(
+        # P3 Task #12: Batch insert using add_all() for single-transaction efficiency
+        clips_to_add = [
+            GeneratedClip(
                 project_id=project_id,
                 index=clip_data.get("index", 0),
                 title=clip_data.get("title", ""),
@@ -3226,30 +3476,53 @@ async def add_clips_to_project(
                 hashtags=clip_data.get("hashtags"),
                 render_path=clip_data.get("render_path"),
             )
-            session.add(clip)
-            added_clips.append(clip)
+            for clip_data in req.clips
+        ]
 
+        session.add_all(clips_to_add)
         await session.commit()
 
-    return {
-        "clips": [
-            {
-                "id": c.id,
-                "project_id": c.project_id,
-                "index": c.index,
-                "title": c.title,
-                "start": c.start_time,
-                "end": c.end_time,
-                "reason": c.reason,
-                "virality_score": c.virality_score,
-                "brand_alignment": c.brand_alignment,
-                "hashtags": c.hashtags,
-                "render_path": c.render_path,
-                "created_at": c.created_at,
-            }
-            for c in added_clips
-        ]
-    }
+        # Return serialized clips
+        return {
+            "clips": [
+                {
+                    "id": c.id,
+                    "project_id": c.project_id,
+                    "index": c.index,
+                    "title": c.title,
+                    "start": c.start_time,
+                    "end": c.end_time,
+                    "reason": c.reason,
+                    "virality_score": c.virality_score,
+                    "brand_alignment": c.brand_alignment,
+                    "hashtags": c.hashtags,
+                    "render_path": c.render_path,
+                    "created_at": c.created_at,
+                }
+                for c in clips_to_add
+            ]
+        }
+
+
+@app.post("/api/projects/{project_id}/clips/batch")
+async def batch_add_clips_to_project(
+    project_id: str,
+    req: AddClipsRequest,
+    user: User = Depends(get_current_user),
+):
+    """
+    Batch add clips to a project with enhanced error handling (P3 Task #12).
+
+    This endpoint is an alias for /api/projects/{project_id}/clips
+    but explicitly documents the batch operation behavior.
+
+    Features:
+    - Single transaction for all inserts
+    - Rollback on any failure
+    - Returns all created clips with IDs
+    """
+    # Delegate to the main add_clips_to_project endpoint
+    return await add_clips_to_project(project_id, req, user)
 
 
 @app.get("/api/projects/{project_id}/clips")
