@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { persist, createJSONStorage } from 'zustand/middleware'
 
 interface PlaybackState {
   currentTime: number
@@ -36,61 +35,49 @@ const INITIAL_STATE: PlaybackState = {
   reset: () => {},
 }
 
-export const usePlaybackStore = create<PlaybackState>()(
-  persist(
-    (set, get) => ({
-      ...INITIAL_STATE,
+export const usePlaybackStore = create<PlaybackState>()((set) => ({
+  ...INITIAL_STATE,
 
-      seek: (time) => {
-        set({ currentTime: Math.max(0, time) })
-      },
+  seek: (time) => {
+    set({ currentTime: Math.max(0, time) })
+  },
 
-      play: () => {
-        set({ isPlaying: true })
-      },
+  play: () => {
+    set({ isPlaying: true })
+  },
 
-      pause: () => {
-        set({ isPlaying: false })
-      },
+  pause: () => {
+    set({ isPlaying: false })
+  },
 
-      togglePlay: () => {
-        set(state => ({ isPlaying: !state.isPlaying }))
-      },
+  togglePlay: () => {
+    set(state => ({ isPlaying: !state.isPlaying }))
+  },
 
-      toggleSnap: () => {
-        set(state => ({ snapEnabled: !state.snapEnabled }))
-      },
+  toggleSnap: () => {
+    set(state => ({ snapEnabled: !state.snapEnabled }))
+  },
 
-      setZoom: (zoom) => {
-        set({ zoom: Math.max(10, Math.min(500, zoom)) })  // clamp between 10-500 px/s
-      },
+  setZoom: (zoom) => {
+    set({ zoom: Math.max(10, Math.min(500, zoom)) })  // clamp between 10-500 px/s
+  },
 
-      stepForward: (seconds = 0.5) => {
-        set(state => ({
-          currentTime: state.currentTime + seconds,
-        }))
-      },
+  stepForward: (seconds = 0.5) => {
+    set(state => ({
+      currentTime: state.currentTime + seconds,
+    }))
+  },
 
-      stepBackward: (seconds = 0.5) => {
-        set(state => ({
-          currentTime: Math.max(0, state.currentTime - seconds),
-        }))
-      },
+  stepBackward: (seconds = 0.5) => {
+    set(state => ({
+      currentTime: Math.max(0, state.currentTime - seconds),
+    }))
+  },
 
-      reset: () => {
-        set(INITIAL_STATE)
-      },
-    }),
-    {
-      name: 'momiji-playback-storage',
-      storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({
-        zoom: state.zoom,
-        snapEnabled: state.snapEnabled,
-      }),
-    }
-  )
-)
+  reset: () => {
+    set(INITIAL_STATE)
+  },
+}))
 
 // Snapping helper - to be expanded in snapping.ts
 export const SNAP_THRESHOLD = 0.16  // ~5 frames at 30fps

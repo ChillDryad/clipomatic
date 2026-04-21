@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useLocation, useNavigate, Link } from 'react-router-dom'
 import { getAllClips, frameUrl } from '../api'
 import type { Clip } from '../types'
+import { formatTime } from '../utils/format'
 
 export function VideoDetailPage() {
   const { sourcePath } = useParams<{ sourcePath: string }>()
@@ -182,8 +183,3 @@ export function VideoDetailPage() {
   )
 }
 
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
-}

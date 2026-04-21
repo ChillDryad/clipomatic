@@ -57,7 +57,7 @@ class TestRegisterEndpoint:
         yield mock_session
 
     @pytest.mark.asyncio
-    async def test_register_success(self, api_client, mock_db_session, test_jwt_secret):
+    async def test_register_success(self, api_client, mock_db_session, test_jwt_keys):
         """Test successful user registration with valid credentials.
 
         Expected behavior:
@@ -66,7 +66,7 @@ class TestRegisterEndpoint:
         - Password is hashed before storage
         """
         with patch("api.get_session") as mock_get_session, \
-             patch.dict(os.environ, {"JWT_SECRET": test_jwt_secret}):
+             patch.dict(os.environ, {"JWT_PRIVATE_KEY": test_jwt_keys["private"], "JWT_PUBLIC_KEY": test_jwt_keys["public"]}):
 
             mock_get_session.return_value = mock_db_session
 
@@ -210,7 +210,7 @@ class TestLoginEndpoint:
         yield mock_session
 
     @pytest.mark.asyncio
-    async def test_login_success(self, api_client, mock_db_session_with_user, test_jwt_secret):
+    async def test_login_success(self, api_client, mock_db_session_with_user, test_jwt_keys):
         """Test successful login with valid credentials.
 
         Expected behavior:
@@ -219,7 +219,7 @@ class TestLoginEndpoint:
         - Returns user profile data
         """
         with patch("api.get_session") as mock_get_session, \
-             patch.dict(os.environ, {"JWT_SECRET": test_jwt_secret}):
+             patch.dict(os.environ, {"JWT_PRIVATE_KEY": test_jwt_keys["private"], "JWT_PUBLIC_KEY": test_jwt_keys["public"]}):
 
             mock_get_session.return_value = mock_db_session_with_user
 
@@ -317,14 +317,14 @@ class TestMeEndpoint:
     """
 
     @pytest.mark.asyncio
-    async def test_get_me_authenticated(self, api_client, auth_tokens, test_jwt_secret):
+    async def test_get_me_authenticated(self, api_client, auth_tokens, test_jwt_keys):
         """Test getting current user info with valid JWT.
 
         Expected behavior:
         - Returns 200 OK with user profile
         - JWT token validated via Cookie dependency
         """
-        with patch.dict(os.environ, {"JWT_SECRET": test_jwt_secret}):
+        with patch.dict(os.environ, {"JWT_PRIVATE_KEY": test_jwt_keys["private"], "JWT_PUBLIC_KEY": test_jwt_keys["public"]}):
             response = await api_client.get(
                 "/api/auth/me",
                 cookies={"access_token": auth_tokens["access"]},
@@ -366,14 +366,14 @@ class TestRefreshEndpoint:
     """
 
     @pytest.mark.asyncio
-    async def test_refresh_success(self, api_client, auth_tokens, test_jwt_secret):
+    async def test_refresh_success(self, api_client, auth_tokens, test_jwt_keys):
         """Test refreshing access token with valid refresh token.
 
         Expected behavior:
         - Returns 200 OK with new access_token
         - Validates refresh token signature and expiration
         """
-        with patch.dict(os.environ, {"JWT_SECRET": test_jwt_secret}):
+        with patch.dict(os.environ, {"JWT_PRIVATE_KEY": test_jwt_keys["private"], "JWT_PUBLIC_KEY": test_jwt_keys["public"]}):
             response = await api_client.post(
                 "/api/auth/refresh",
                 json={"refresh_token": auth_tokens["refresh"]},

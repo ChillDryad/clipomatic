@@ -4,7 +4,7 @@ Unit tests for pipeline/transcription.py.
 Tests cover:
 - Device detection logic
 - Transcript to text conversion
-- Compute type selection
+- Device/compute type resolution
 """
 
 import sys
@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from pipeline.transcription import (
-    _compute_type_for_device,
+    _resolve_device,
     detect_device,
     transcript_to_text,
 )
@@ -58,23 +58,29 @@ class TestDetectDevice:
             assert compute_type == "int8"
 
 
-class TestComputeTypeForDevice:
-    """Tests for _compute_type_for_device function."""
+class TestResolveDevice:
+    """Tests for _resolve_device function."""
 
-    def test_compute_type_cuda(self):
-        """Test compute type for CUDA device."""
-        compute_type = _compute_type_for_device("cuda")
+    def test_resolve_cuda(self):
+        device, compute_type = _resolve_device("cuda")
+        assert device == "cuda"
         assert compute_type == "float16"
 
-    def test_compute_type_cpu(self):
-        """Test compute type for CPU device."""
-        compute_type = _compute_type_for_device("cpu")
+    def test_resolve_cpu(self):
+        device, compute_type = _resolve_device("cpu")
+        assert device == "cpu"
         assert compute_type == "int8"
 
-    def test_compute_type_unknown_device(self):
-        """Test compute type for unknown device."""
-        compute_type = _compute_type_for_device("unknown")
-        # Should default to int8
+    def test_resolve_unknown_defaults_to_int8(self):
+        device, compute_type = _resolve_device("unknown")
+        assert device == "unknown"
+        assert compute_type == "int8"
+
+    def test_resolve_auto_delegates_to_detect_device(self):
+        with patch("pipeline.transcription.detect_device", return_value=("cpu", "int8")) as mock:
+            device, compute_type = _resolve_device("auto")
+        mock.assert_called_once()
+        assert device == "cpu"
         assert compute_type == "int8"
 
 

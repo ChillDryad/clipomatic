@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { persist, createJSONStorage } from 'zustand/middleware'
 
 interface SelectionState {
   selectedSegmentIds: Set<string>
@@ -23,88 +22,78 @@ const INITIAL_STATE: Omit<SelectionState, 'select' | 'selectTrack' | 'clearSelec
   selectedCount: 0,
 }
 
-export const useSelectionStore = create<SelectionState>()(
-  persist(
-    (set, get) => ({
-      ...INITIAL_STATE,
+export const useSelectionStore = create<SelectionState>()((set, get) => ({
+  ...INITIAL_STATE,
 
-      select: (segmentId, mode = 'replace') => {
-        set(state => {
-          const newSet = mode === 'replace'
-            ? new Set([segmentId])
-            : mode === 'add'
-              ? new Set(state.selectedSegmentIds).add(segmentId)
-              : new Set(state.selectedSegmentIds)  // range selection handled separately
+  select: (segmentId, mode = 'replace') => {
+    set(state => {
+      const newSet = mode === 'replace'
+        ? new Set([segmentId])
+        : mode === 'add'
+          ? new Set(state.selectedSegmentIds).add(segmentId)
+          : new Set(state.selectedSegmentIds)  // range selection handled separately
 
-          if (mode === 'add' && state.selectedSegmentIds.has(segmentId)) {
-            newSet.delete(segmentId)  // toggle off
-          }
+      if (mode === 'add' && state.selectedSegmentIds.has(segmentId)) {
+        newSet.delete(segmentId)  // toggle off
+      }
 
-          return {
-            selectedSegmentIds: newSet,
-            selectedCount: newSet.size,
-          }
-        })
-      },
+      return {
+        selectedSegmentIds: newSet,
+        selectedCount: newSet.size,
+      }
+    })
+  },
 
-      selectTrack: (trackId, mode = 'replace') => {
-        set(state => {
-          const newSet = mode === 'replace'
-            ? new Set([trackId])
-            : new Set(state.selectedTrackIds)
+  selectTrack: (trackId, mode = 'replace') => {
+    set(state => {
+      const newSet = mode === 'replace'
+        ? new Set([trackId])
+        : new Set(state.selectedTrackIds)
 
-          if (mode === 'add' && state.selectedTrackIds.has(trackId)) {
-            newSet.delete(trackId)
-          } else if (mode === 'add') {
-            newSet.add(trackId)
-          }
+      if (mode === 'add' && state.selectedTrackIds.has(trackId)) {
+        newSet.delete(trackId)
+      } else if (mode === 'add') {
+        newSet.add(trackId)
+      }
 
-          return { selectedTrackIds: newSet }
-        })
-      },
+      return { selectedTrackIds: newSet }
+    })
+  },
 
-      clearSelection: () => {
-        set({
-          selectedSegmentIds: new Set(),
-          selectedTrackIds: new Set(),
-          selectedCount: 0,
-        })
-      },
+  clearSelection: () => {
+    set({
+      selectedSegmentIds: new Set(),
+      selectedTrackIds: new Set(),
+      selectedCount: 0,
+    })
+  },
 
-      deleteSelected: () => {
-        // This is a signal action - actual deletion handled by timeline store
-        set(state => ({
-          selectedSegmentIds: new Set(),
-          selectedCount: 0,
-        }))
-      },
+  deleteSelected: () => {
+    // This is a signal action - actual deletion handled by timeline store
+    set(state => ({
+      selectedSegmentIds: new Set(),
+      selectedCount: 0,
+    }))
+  },
 
-      duplicateSelected: () => {
-        // This is a signal action - actual duplication handled by timeline store
-        // Returns the selected IDs for the caller to process
-        return get().selectedSegmentIds
-      },
+  duplicateSelected: () => {
+    // This is a signal action - actual duplication handled by timeline store
+    // Returns the selected IDs for the caller to process
+    return get().selectedSegmentIds
+  },
 
-      isSelected: (segmentId) => {
-        return get().selectedSegmentIds.has(segmentId)
-      },
+  isSelected: (segmentId) => {
+    return get().selectedSegmentIds.has(segmentId)
+  },
 
-      isTrackSelected: (trackId) => {
-        return get().selectedTrackIds.has(trackId)
-      },
+  isTrackSelected: (trackId) => {
+    return get().selectedTrackIds.has(trackId)
+  },
 
-      reset: () => {
-        set(INITIAL_STATE)
-      },
-    }),
-    {
-      name: 'momiji-selection-storage',
-      storage: createJSONStorage(() => localStorage),
-      // Don't persist selections across sessions
-      partialize: () => ({}),
-    }
-  )
-)
+  reset: () => {
+    set(INITIAL_STATE)
+  },
+}))
 
 // Lasso selection helper
 export interface LassoSelection {

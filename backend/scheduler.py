@@ -121,24 +121,26 @@ async def _execute_post(job_id: str) -> None:
         from auth import decrypt_oauth_token
         access_token = decrypt_oauth_token(token_row.access_token)
 
-        # Check expiry
+        # Check expiry (refresh if within 60 seconds of expiration)
         now = time.time()
         if token_row.expires_at and token_row.expires_at - 60 < now:
             logger.info("Token expired, refreshing for job %s", job_id)
             try:
-                new_token = await adapter.refresh_token(token_row, access_token)
-                from auth import encrypt_oauth_token
-                token_row.access_token = encrypt_oauth_token(new_token["access_token"])
-                if new_token.get("refresh_token"):
-                    token_row.refresh_token = encrypt_oauth_token(new_token["refresh_token"]) if new_token["refresh_token"] else None
-                if new_token.get("expires_at"):
-                    token_row.expires_at = new_token["expires_at"]
-                await session.commit()
+                # Use RFC 9700 token rotation with reuse detection
+                new_token = await adapter._refresh_oauth_token(token_row, session, access_token)
                 access_token = new_token["access_token"]  # Use fresh token
+            except RuntimeError as exc:
+                # Token reuse detected or no refresh token - fail the job
+                job.status = "failed"
+                job.error_message = f"Token refresh failed (possible replay attack): {exc}"
+                await session.commit()
+                logger.warning("Job %s token refresh failed: %s", job_id, exc)
+                return
             except Exception as exc:
                 job.status = "failed"
                 job.error_message = f"Token refresh failed: {exc}"
                 await session.commit()
+                logger.exception("Job %s token refresh failed: %s", job_id, exc)
                 return
 
         # Upload

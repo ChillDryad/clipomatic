@@ -2,9 +2,88 @@
 
 **Goal:** Transform Momiji Clipper's clip review interface into a full-featured, OpenCut-style timeline video editor with multi-track support, advanced editing features, and server-side rendering.
 
-**Status:** Planning Complete — Ready for Implementation
+**Status:** 75% Complete — Core Functionality Implemented
 
-**Last Updated:** 2026-04-14
+**Last Updated:** 2026-04-20
+
+**Implementation Progress:**
+| Phase | Status | Completion |
+|-------|--------|------------|
+| Phase 1: Foundation & State Management | ✅ Complete | 100% |
+| Phase 2: Timeline Core Enhancements | ⚠️ Partial | 80% (multi-select pending) |
+| Phase 3: New Track Types | ✅ Complete | 100% |
+| Phase 4: Preview Player Enhancements | ⚠️ Partial | 70% (compositing utility pending) |
+| Phase 5: Backend API Extensions | ✅ Complete | 100% |
+| Phase 6: UI Components | ⚠️ Partial | 75% (property panels pending) |
+| Phase 7: Polish & Performance | ❌ Not Started | 0% |
+
+---
+
+## Implementation Status (2026-04-20)
+
+### ✅ Completed
+
+**Phase 1: Foundation**
+- Zustand stores: `timelineStore`, `selectionStore`, `playbackStore`, `panelStore`, `authStore`
+- Track type definitions in `types.ts`
+
+**Phase 2: Timeline Core**
+- Snapping system (`utils/snapping.ts`, `SnapIndicator.tsx`)
+- Ripple editing (`RipplePreview.tsx`)
+- Markers system (`TimelineMarkerTrack.tsx`, `MarkerList.tsx`)
+- Improved drag/trim (`SegmentHandles.tsx`, `TrimHandle.tsx`)
+
+**Phase 3: Track Types**
+- Overlay track (`TimelineOverlayTrack.tsx`, `MediaLibrary.tsx`)
+- Audio track (`TimelineAudioTrack.tsx`, `WaveformCanvas.tsx`)
+- Text track (`TimelineTextTrack.tsx`)
+
+**Phase 4: Preview & Shortcuts**
+- Preview composition (`PreviewPlayer.tsx`, `PreviewViewport.tsx`)
+- Keyboard shortcuts modal (`KeyboardShortcutsModal.tsx`)
+
+**Phase 5: Backend APIs**
+- `POST /api/media/upload`, `GET /api/media/list`
+- `POST /api/audio/upload`, `GET /api/audio/waveform`
+- `POST /api/markers`, `POST /api/timeline/batch`
+- `POST /api/render/timeline`
+- Pipeline modules: `media.py`, `audio.py`, `renderer.render_timeline()`
+
+**Phase 6: UI Components**
+- Track components, `WaveformCanvas`, `PropertiesPanel`, `MediaLibrary`, `MarkerList`
+- `TrackHeader`, `SegmentHandles`, `PlaybackControls`, `ZoomSlider`
+- Layout: `CollapsibleTrackGroup.tsx`
+
+---
+
+### ❌ Pending Tasks
+
+**Critical (blocking full functionality):**
+- [ ] **2.4 Multi-selection with lasso** - `MultiSelectBox` component, drag selection box
+- [ ] **2.3 Marker endpoints** - `DELETE /api/markers/{id}`, `PUT /api/markers/{id}`
+- [ ] **6.1 Property panels** - `OverlayProperties.tsx`, `AudioProperties.tsx`, `TextProperties.tsx`
+- [ ] **4.1 Compositing utility** - `utils/compositing.ts`
+
+**Performance & Polish:**
+- [ ] **7.1 Waveform worker** - `workers/waveform.worker.ts`
+- [ ] **7.1 Virtual timeline** - `hooks/useVirtualTimeline.ts`
+- [ ] **7.1 Keyboard shortcuts hook** - `hooks/useKeyboardShortcuts.ts`
+- [ ] **7.1 Audio utilities** - `utils/audio.ts`
+- [ ] **7.3 Auto-save** - localStorage persistence (30s interval)
+- [ ] **7.3 Session recovery** - Crash detection and state restoration
+
+**Layout Improvements:**
+- [ ] Resizable track heights (drag to resize)
+- [ ] Floating/dockable properties panel
+- [ ] Split view mode (timeline + preview side-by-side)
+- [ ] Track reordering (drag to reorder)
+- [ ] Track grouping UI
+
+**Accessibility:**
+- [ ] Full keyboard navigation audit
+- [ ] Screen reader labels
+- [ ] High contrast mode
+- [ ] Lighthouse accessibility score > 90
 
 ---
 

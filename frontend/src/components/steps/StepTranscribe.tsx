@@ -1,14 +1,17 @@
-import React, { useState } from 'react'
-import { transcribe, getCachedTranscript, parseApiError, getAbortController, cancelOperation } from '../../api'
+import React, { useState, useEffect } from 'react'
+import { transcribe, getCachedTranscript, parseApiError, getAbortController, cancelOperation, checkIngestState } from '../../api'
 import { ProgressBar } from '../ui/ProgressBar'
 import { usePipeline } from '../../context/PipelineContext'
+import { formatDuration } from '../../utils/format'
+import { ApiErrorBanner } from '../ui/ApiErrorBanner'
 
 export function StepTranscribe() {
-  const { source, transcript, config, setTranscript } = usePipeline()
+  const { source, transcript, config, setTranscript, projectId } = usePipeline()
   const [progress, setProgress] = useState<{ value: number; label: string } | null>(null)
   const [error, setError] = useState<{ message: string; suggestion?: string } | null>(null)
   const [showRaw, setShowRaw] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [hasCachedTranscript, setHasCachedTranscript] = useState(false)
 
   const handleCancel = () => {
     setIsCancelling(true)
@@ -16,6 +19,16 @@ export function StepTranscribe() {
   }
 
   const sourcePath = source?.audioPath ?? source?.videoPath ?? ''
+
+  // Check for cached transcript on mount
+  useEffect(() => {
+    if (!sourcePath || transcript) return
+    checkIngestState(sourcePath)
+      .then((state) => {
+        if (state.transcript_cached) setHasCachedTranscript(true)
+      })
+      .catch(() => {})
+  }, [sourcePath, transcript])
 
   const handleTranscribe = async () => {
     if (!source) return
@@ -31,12 +44,14 @@ export function StepTranscribe() {
           model_size: config.whisperModel,
           device: config.whisperDevice,
           language: undefined,
+          project_id: projectId ?? undefined,
         },
         (value, label) => setProgress({ value, label }),
         controller.signal,
       )
       setProgress(null)
       setTranscript(result)
+      setHasCachedTranscript(false)
     } catch (err) {
       setProgress(null)
       if (String(err).includes('cancelled')) {
@@ -52,7 +67,10 @@ export function StepTranscribe() {
   const handleLoadCached = async () => {
     try {
       const cached = await getCachedTranscript(sourcePath)
-      if (cached) setTranscript(cached)
+      if (cached) {
+        setTranscript(cached)
+        setHasCachedTranscript(false)
+      }
     } catch {
       // ignore
     }
@@ -66,6 +84,17 @@ export function StepTranscribe() {
 
   return (
     <div className="space-y-6">
+      {hasCachedTranscript && !transcript && (
+        <div className="glass-card p-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-[var(--ctp-blue)]">
+            Cached transcript found from a previous run.
+          </p>
+          <button onClick={handleLoadCached} className="btn-primary text-sm py-1 shrink-0">
+            Load cached transcript
+          </button>
+        </div>
+      )}
+
       {transcript && (
         <div className="glass-card p-4 space-y-3">
           <p className="text-sm text-[var(--ctp-green)]">
@@ -106,15 +135,6 @@ export function StepTranscribe() {
         >
           {transcript ? 'Re-transcribe' : 'Transcribe'} with Whisper
         </button>
-        {!transcript && (
-          <button
-            onClick={handleLoadCached}
-            disabled={!!progress}
-            className="btn-secondary"
-          >
-            Load cached transcript
-          </button>
-        )}
       </div>
 
       <p className="mt-2 text-xs text-[var(--ctp-subtext)]">
@@ -140,37 +160,8 @@ export function StepTranscribe() {
         </div>
       )}
 
-      {error && (
-        <div className="mt-3 glass-card p-3 border-l-4 border-[var(--ctp-red)]">
-          <div className="flex items-start gap-3">
-            <svg className="w-5 h-5 text-[var(--ctp-red)] shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-[var(--ctp-red)] mb-1">{error.message}</p>
-              {error.suggestion && (
-                <p className="text-xs text-[var(--ctp-subtext)] mb-2">{error.suggestion}</p>
-              )}
-              <button
-                onClick={handleTranscribe}
-                className="text-xs text-[var(--ctp-blue)] hover:text-[var(--ctp-text)] flex items-center gap-1"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Retry
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {error && <ApiErrorBanner error={error} onRetry={handleTranscribe} />}
     </div>
   )
 }
 
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = Math.floor(seconds % 60)
-  return h > 0 ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`
-}

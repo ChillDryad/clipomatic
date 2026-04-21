@@ -16,9 +16,27 @@ _YTDLP_PROGRESS_RE = re.compile(r"\[download\]\s+([\d.]+)%")
 # ffmpeg stderr time progress: time=00:12:34.56
 _FFMPEG_TIME_RE = re.compile(r"time=(\d+):(\d+):([\d.]+)")
 
-
 _YTDLP_DEST_RE = re.compile(r"\[download\] Destination: (.+)")
 _YTDLP_ALREADY_RE = re.compile(r"\[download\] (.+) has already been downloaded")
+
+
+def _fire(callback: ProgressCallback | None, fraction: float, label: str) -> None:
+    if callback:
+        callback(fraction, label)
+
+
+def _apply_browser_cookies(cmd: list[str]) -> list[str]:
+    cookies_browser = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "").strip()
+    if cookies_browser:
+        cmd += ["--cookies-from-browser", cookies_browser]
+    return cmd
+
+
+def _resolve_ytdlp_output(stdout_data: str, last_destination: list[str]) -> str:
+    output_path = stdout_data.strip().splitlines()[-1].strip() if stdout_data.strip() else ""
+    if not output_path and last_destination:
+        output_path = last_destination[-1]
+    return output_path
 
 
 # ---------------------------------------------------------------------------
@@ -50,11 +68,7 @@ def stream_audio_to_file(
     """
     os.makedirs(os.path.dirname(audio_path) or ".", exist_ok=True)
 
-    def _cb(fraction: float, label: str):
-        if progress_callback:
-            progress_callback(fraction, label)
-
-    _cb(0.0, "Fetching stream info…")
+    _fire(progress_callback, 0.0, "Fetching stream info…")
 
     # Step 1 — duration
     dur_result = subprocess.run(
@@ -68,7 +82,7 @@ def stream_audio_to_file(
         except ValueError:
             pass
 
-    _cb(0.02, "Getting audio stream URL…")
+    _fire(progress_callback, 0.02, "Getting audio stream URL…")
 
     # Step 2 — direct stream URL
     url_result = subprocess.run(
@@ -81,7 +95,7 @@ def stream_audio_to_file(
         )
     stream_url = url_result.stdout.strip().splitlines()[-1]
 
-    _cb(0.05, "Streaming audio…")
+    _fire(progress_callback, 0.05, "Streaming audio…")
 
     # Step 3 — ffmpeg transcode
     cmd = [
@@ -110,7 +124,7 @@ def stream_audio_to_file(
             secs = int(elapsed % 60)
             total_mins = int(total_seconds // 60)
             total_secs = int(total_seconds % 60)
-            _cb(fraction, f"Streaming audio… {mins}:{secs:02d} / {total_mins}:{total_secs:02d}")
+            _fire(progress_callback, fraction, f"Streaming audio… {mins}:{secs:02d} / {total_mins}:{total_secs:02d}")
 
     process.wait()
 
@@ -120,7 +134,7 @@ def stream_audio_to_file(
             + "\n".join(stderr_lines[-20:])
         )
 
-    _cb(1.0, "Audio stream complete.")
+    _fire(progress_callback, 1.0, "Audio stream complete.")
     return audio_path
 
 
@@ -151,15 +165,9 @@ def download_segment(
         url,
     ]
 
-    cookies_browser = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "").strip()
-    if cookies_browser:
-        cmd += ["--cookies-from-browser", cookies_browser]
+    _apply_browser_cookies(cmd)
 
-    def _cb(fraction: float, label: str):
-        if progress_callback:
-            progress_callback(fraction, label)
-
-    _cb(0.0, "Starting segment download…")
+    _fire(progress_callback, 0.0, "Starting segment download…")
 
     # yt-dlp stdout is a single filepath line — won't fill the pipe buffer, so
     # reading stderr first in the main thread is safe and avoids NoSessionContext.
@@ -174,9 +182,9 @@ def download_segment(
         m = _YTDLP_PROGRESS_RE.search(line)
         if m:
             pct = float(m.group(1)) / 100.0
-            _cb(pct * 0.95, f"Downloading segment… {m.group(1)}%")
+            _fire(progress_callback, pct * 0.95, f"Downloading segment… {m.group(1)}%")
         elif "Merging formats" in line or "[Merger]" in line or "[ffmpeg]" in line:
-            _cb(0.96, "Merging segment…")
+            _fire(progress_callback, 0.96, "Merging segment…")
         dm = _YTDLP_DEST_RE.search(line)
         if dm:
             last_destination.append(dm.group(1).strip())
@@ -194,12 +202,9 @@ def download_segment(
             + "\n".join(stderr_lines[-20:])
         )
 
-    _cb(1.0, "Segment download complete.")
+    _fire(progress_callback, 1.0, "Segment download complete.")
 
-    output_path = stdout_data.strip().splitlines()[-1].strip() if stdout_data.strip() else ""
-    if not output_path and last_destination:
-        output_path = last_destination[-1]
-
+    output_path = _resolve_ytdlp_output(stdout_data, last_destination)
     if not output_path or not os.path.exists(output_path):
         raise RuntimeError(
             f"yt-dlp finished but segment file not found.\n"
@@ -241,15 +246,9 @@ def download_video(
     ]
 
     # Optional: authenticate via browser cookies (needed for subscriber-only Twitch VODs)
-    cookies_browser = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "").strip()
-    if cookies_browser:
-        cmd += ["--cookies-from-browser", cookies_browser]
+    _apply_browser_cookies(cmd)
 
-    def _cb(fraction: float, label: str):
-        if progress_callback:
-            progress_callback(fraction, label)
-
-    _cb(0.0, "Starting download…")
+    _fire(progress_callback, 0.0, "Starting download…")
 
     process = subprocess.Popen(
         cmd,
@@ -271,14 +270,14 @@ def download_video(
         if m:
             pct = float(m.group(1)) / 100.0
             if download_phase <= 0:
-                _cb(pct * 0.5, f"Downloading video… {m.group(1)}%")
+                _fire(progress_callback, pct * 0.5, f"Downloading video… {m.group(1)}%")
             else:
-                _cb(0.5 + pct * 0.45, f"Downloading audio… {m.group(1)}%")
+                _fire(progress_callback, 0.5 + pct * 0.45, f"Downloading audio… {m.group(1)}%")
         elif "has already been downloaded" in line or \
              "Merging formats" in line or \
              "[Merger]" in line or \
              "[ffmpeg]" in line:
-            _cb(0.95, "Merging video and audio…")
+            _fire(progress_callback, 0.95, "Merging video and audio…")
         if "[download] Destination:" in line:
             download_phase += 1
             dm = _YTDLP_DEST_RE.search(line)
@@ -298,14 +297,11 @@ def download_video(
             + "\n".join(stderr_lines[-20:])
         )
 
-    _cb(1.0, "Download complete.")
+    _fire(progress_callback, 1.0, "Download complete.")
 
     # Prefer the path printed by --print after_move:filepath; fall back to the
     # last Destination line (HLS single-stream downloads skip the merge/move step).
-    output_path = stdout_data.strip().splitlines()[-1].strip() if stdout_data.strip() else ""
-    if not output_path and last_destination:
-        output_path = last_destination[-1]
-
+    output_path = _resolve_ytdlp_output(stdout_data, last_destination)
     if not output_path or not os.path.exists(output_path):
         raise RuntimeError(
             f"yt-dlp finished but the output file was not found.\n"

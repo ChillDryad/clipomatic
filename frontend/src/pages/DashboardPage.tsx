@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from '../components/ui/Button'
-import { frameUrl } from '../api'
+import { frameUrl, listProjects } from '../api'
+import { formatDate, formatDuration } from '../utils/format'
+import { LoadingSpinner } from '../components/ui/LoadingSpinner'
+import { useInfiniteQuery } from '@tanstack/react-query'
 
 interface VideoProject {
   id: string
@@ -24,87 +27,65 @@ interface Team {
   member_count?: number
 }
 
+const PAGE_SIZE = 20
+
 export function DashboardPage() {
   const navigate = useNavigate()
   const { user, isAuthenticated, logout } = useAuth()
-  const [projects, setProjects] = useState<VideoProject[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [teamDropdownOpen, setTeamDropdownOpen] = useState(false)
 
+  // Load teams on mount
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/login', { replace: true })
       return
     }
-    loadDashboard()
-  }, [selectedTeam, isAuthenticated])
-
-  const loadDashboard = async () => {
-    setLoading(true)
-    setError(null)
-
-    try {
-      // Load teams
-      const teamsRes = await fetch('/api/teams', { credentials: 'include' })
-      if (teamsRes.ok) {
-        const teamsData = await teamsRes.json()
-        setTeams(teamsData.teams || [])
+    const loadTeams = async () => {
+      try {
+        const teamsRes = await fetch('/api/teams', { credentials: 'include' })
+        if (teamsRes.ok) {
+          const teamsData = await teamsRes.json()
+          setTeams(teamsData.teams || [])
+        }
+      } catch (err) {
+        console.error('Failed to load teams:', err)
       }
-
-      // Load projects
-      const projectsUrl = selectedTeam
-        ? `/api/projects?team_id=${selectedTeam}`
-        : '/api/projects'
-      const projectsRes = await fetch(projectsUrl, { credentials: 'include' })
-      if (projectsRes.ok) {
-        const projectsData = await projectsRes.json()
-        setProjects(projectsData.projects || projectsData)
-      }
-    } catch (err) {
-      console.error('Failed to load dashboard:', err)
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard')
-    } finally {
-      setLoading(false)
     }
-  }
+    loadTeams()
+  }, [isAuthenticated, navigate])
 
-  const formatDate = (timestamp: number): string => {
-    return new Date(timestamp * 1000).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    })
-  }
+  // Infinite query for projects with pagination
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+    error,
+  } = useInfiniteQuery({
+    queryKey: ['projects', selectedTeam],
+    queryFn: ({ pageParam = 0 }) => listProjects(selectedTeam || undefined, PAGE_SIZE, pageParam as number),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => {
+      return lastPage.has_more ? lastPage.offset + lastPage.limit : undefined
+    },
+    enabled: isAuthenticated,
+  })
 
-  const formatDuration = (seconds: number | null): string => {
-    if (seconds === null) return 'Unknown'
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    const s = Math.floor(seconds % 60)
-    if (h > 0) return `${h}h ${m}m ${s}s`
-    return `${m}m ${s}s`
-  }
+  // Flatten all pages of projects
+  const allProjects = data?.pages.flatMap(page => page.projects) ?? []
+  const totalProjects = data?.pages[0]?.total ?? 0
+
 
   const handleLogout = () => {
     logout()
     navigate('/login', { replace: true })
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="relative w-16 h-16 mx-auto">
-            <div className="absolute inset-0 rounded-full border-4 border-[var(--ctp-mauve-20)]" />
-            <div className="absolute inset-0 rounded-full border-4 border-[var(--ctp-mauve)] border-t-transparent animate-spin" />
-          </div>
-          <p className="text-[var(--ctp-subtext)] animate-pulse">Loading dashboard...</p>
-        </div>
-      </div>
-    )
+  if (isLoading) {
+    return <LoadingSpinner label="Loading dashboard..." />
   }
 
   if (error) {
@@ -117,8 +98,8 @@ export function DashboardPage() {
             </svg>
           </div>
           <h3 className="text-lg font-semibold text-[var(--ctp-text)] mb-2">Failed to load dashboard</h3>
-          <p className="text-sm text-[var(--ctp-red)] mb-6">{error}</p>
-          <Button onClick={loadDashboard} variant="primary" className="inline-flex">
+          <p className="text-sm text-[var(--ctp-red)] mb-6">{error instanceof Error ? error.message : 'Unknown error'}</p>
+          <Button onClick={() => window.location.reload()} variant="primary" className="inline-flex">
             <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
@@ -237,11 +218,11 @@ export function DashboardPage() {
             {selectedTeam ? `${teams.find(t => t.id === selectedTeam)?.name} Projects` : 'My Projects'}
           </h2>
           <span className="text-xs px-2.5 py-1 rounded-full bg-[var(--ctp-mauve-20)] text-[var(--ctp-mauve)] font-medium">
-            {projects.length} project{projects.length !== 1 ? 's' : ''}
+            {allProjects.length} of {totalProjects} project{allProjects.length !== 1 ? 's' : ''}
           </span>
         </div>
 
-        {projects.length === 0 ? (
+        {allProjects.length === 0 ? (
           <div className="glass-card p-12 text-center">
             <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-[var(--ctp-mauve-20)] to-[var(--ctp-blue-20)] flex items-center justify-center">
               <svg className="w-10 h-10 text-[var(--ctp-mauve)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -260,13 +241,14 @@ export function DashboardPage() {
             </Link>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {projects.map(project => (
-              <Link
-                key={project.id}
-                to={`/video/${project.id}`}
-                className="glass-card p-4 hover:border-[var(--ctp-mauve)] hover:shadow-lg transition-all duration-300 group cursor-pointer block"
-              >
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {allProjects.map(project => (
+                <Link
+                  key={project.id}
+                  to={`/video/${project.id}`}
+                  className="glass-card p-4 hover:border-[var(--ctp-mauve)] hover:shadow-lg transition-all duration-300 group cursor-pointer block"
+                >
                 {/* Thumbnail */}
                 <div className="relative w-full rounded-xl overflow-hidden mb-3 bg-[var(--ctp-surface-1)] aspect-video">
                   <img
@@ -318,7 +300,36 @@ export function DashboardPage() {
                 </div>
               </Link>
             ))}
-          </div>
+            </div>
+
+            {/* Infinite scroll loader */}
+            {hasNextPage && (
+              <div className="mt-6 flex justify-center">
+                <button
+                  onClick={() => fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  className="btn-secondary flex items-center gap-2"
+                >
+                  {isFetchingNextPage ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                      Load More
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -331,7 +342,7 @@ export function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
               </svg>
             </div>
-            <div className="text-2xl font-bold text-[var(--ctp-mauve)]">{projects.length}</div>
+            <div className="text-2xl font-bold text-[var(--ctp-mauve)]">{totalProjects}</div>
           </div>
           <div className="text-xs text-[var(--ctp-subtext)] font-medium">Total Projects</div>
         </div>
@@ -343,7 +354,7 @@ export function DashboardPage() {
               </svg>
             </div>
             <div className="text-2xl font-bold text-[var(--ctp-green)]">
-              {projects.filter(p => p.status === 'complete').length}
+              {allProjects.filter(p => p.status === 'complete').length}
             </div>
           </div>
           <div className="text-xs text-[var(--ctp-subtext)] font-medium">Completed</div>
@@ -356,7 +367,7 @@ export function DashboardPage() {
               </svg>
             </div>
             <div className="text-2xl font-bold text-[var(--ctp-blue)]">
-              {projects.filter(p => p.status === 'processing').length}
+              {allProjects.filter(p => p.status === 'processing').length}
             </div>
           </div>
           <div className="text-xs text-[var(--ctp-subtext)] font-medium">Processing</div>

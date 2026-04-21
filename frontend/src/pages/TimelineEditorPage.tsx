@@ -2,7 +2,7 @@ import { useEffect, useCallback, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { loadTimelineDataByProject, updateClipMetadata, regenerateClipMetadata, renderClip, createMarker, listMarkers, updateMarker as updateMarkerApi, deleteMarker as deleteMarkerApi, uploadMedia, listMedia, uploadAudio, downloadSegment, getAbortController, cancelOperation, getCachedTranscript, type MediaAsset as ApiMediaAsset } from '../api'
 import { OpenCutTimeline } from '../components/timeline/OpenCutTimeline'
-import { TimelineToolbar } from '../components/timeline/TimelineToolbar'
+import { TimelineToolbar, type RenderSettings } from '../components/timeline/TimelineToolbar'
 import { PreviewPlayer } from '../components/timeline/PreviewPlayer'
 import { PreviewViewport } from '../components/preview/PreviewViewport'
 import { SubtitleEditor } from '../components/timeline/SubtitleEditor'
@@ -38,11 +38,11 @@ export function TimelineEditorPage() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [renderProgress, setRenderProgress] = useState<{ p: number; l: string } | null>(null)
   const [isCancellingRender, setIsCancellingRender] = useState(false)
-  const [renderSettings, setRenderSettings] = useState({
+  const [renderSettings, setRenderSettings] = useState<RenderSettings>({
     fontSize: 50,
     wordsPerLine: 2,
-    qualityPreset: 'standard' as 'standard' | 'production',
-    captionStyle: 'karaoke' as 'karaoke' | 'capcut',
+    qualityPreset: 'standard',
+    captionStyle: 'karaoke',
   })
   const [segmentDownloadProgress, setSegmentDownloadProgress] = useState<{ p: number; l: string } | null>(null)
 

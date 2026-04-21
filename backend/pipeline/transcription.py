@@ -14,6 +14,8 @@ import sys
 import tempfile
 from typing import Callable
 
+from pipeline.media import get_media_duration
+
 # Audio files longer than this are split into chunks before transcription.
 # 30 minutes keeps memory usage manageable even on small-VRAM GPUs.
 _CHUNK_SECONDS = 1800
@@ -47,27 +49,16 @@ def detect_device() -> tuple[str, str]:
     return "cpu", "int8"
 
 
-def _compute_type_for_device(device: str) -> str:
-    if device == "cuda":
-        return "float16"
-    return "int8"
+def _resolve_device(device_arg: str) -> tuple[str, str]:
+    if device_arg == "auto":
+        return detect_device()
+    compute_type = "float16" if device_arg == "cuda" else "int8"
+    return device_arg, compute_type
 
 
-def _get_duration(audio_path: str) -> float:
-    """Return the duration of an audio file in seconds via ffprobe."""
-    cmd = [
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "json",
-        audio_path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        return 0.0
-    try:
-        return float(json.loads(result.stdout)["format"]["duration"])
-    except (KeyError, ValueError):
-        return 0.0
+def _fire(callback: Callable | None, fraction: float, label: str) -> None:
+    if callback:
+        callback(fraction, label)
 
 
 def _split_audio(audio_path: str, chunk_dir: str, chunk_seconds: int = _CHUNK_SECONDS) -> list[tuple[str, float]]:
@@ -149,14 +140,7 @@ def transcribe(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    if device == "auto":
-        device, compute_type = detect_device()
-    else:
-        compute_type = _compute_type_for_device(device)
-
-    def _cb(fraction: float, label: str):
-        if progress_callback:
-            progress_callback(fraction, label)
+    device, compute_type = _resolve_device(device)
 
     # If a pre-extracted audio file is provided, use it directly.
     _temp_audio: str | None = None
@@ -172,24 +156,24 @@ def transcribe(
 
     try:
         if _temp_audio is not None:
-            _cb(0.0, "Extracting audio…")
+            _fire(progress_callback, 0.0, "Extracting audio…")
             _extract_audio(video_path, _temp_audio)
         else:
-            _cb(0.0, "Using pre-streamed audio…")
+            _fire(progress_callback, 0.0, "Using pre-streamed audio…")
 
-        _cb(0.05, f"Loading Whisper model ({model_size})…")
+        _fire(progress_callback, 0.05, f"Loading Whisper model ({model_size})…")
         model = WhisperModel(model_size, device=device, compute_type=compute_type)
 
         transcribe_kwargs = dict(word_timestamps=True, beam_size=5)
         if language:
             transcribe_kwargs["language"] = language
 
-        total_duration = _get_duration(_audio_to_transcribe) or 1.0
+        total_duration = get_media_duration(_audio_to_transcribe) or 1.0
 
         # --- Chunked transcription for long files ---
         if total_duration > _CHUNK_SECONDS:
             chunk_dir = tempfile.mkdtemp(prefix="momiji_chunks_")
-            _cb(0.08, f"Audio is {total_duration/3600:.1f}h — splitting into 30-min chunks…")
+            _fire(progress_callback, 0.08, f"Audio is {total_duration/3600:.1f}h — splitting into 30-min chunks…")
             chunks = _split_audio(_audio_to_transcribe, chunk_dir)
         else:
             chunks = [(_audio_to_transcribe, 0.0)]
@@ -213,13 +197,13 @@ def transcribe(
                 detected_language = partial.get("language", detected_language)
                 language_probability = partial.get("language_probability", language_probability)
                 chunk_progress = (chunk_idx + 1) / n_chunks
-                _cb(0.10 + chunk_progress * 0.85,
-                    f"Chunk {chunk_idx + 1}/{n_chunks} loaded from cache…")
+                _fire(progress_callback, 0.10 + chunk_progress * 0.85,
+                      f"Chunk {chunk_idx + 1}/{n_chunks} loaded from cache…")
                 continue
 
-            _cb(0.10 + (chunk_idx / n_chunks) * 0.85,
-                f"Transcribing chunk {chunk_idx + 1}/{n_chunks} "
-                f"(starting at {int(offset//60)}:{int(offset%60):02d})…")
+            _fire(progress_callback, 0.10 + (chunk_idx / n_chunks) * 0.85,
+                  f"Transcribing chunk {chunk_idx + 1}/{n_chunks} "
+                  f"(starting at {int(offset//60)}:{int(offset%60):02d})…")
 
             segments_iter, info = model.transcribe(chunk_path, **transcribe_kwargs)
             detected_language = info.language
@@ -246,12 +230,11 @@ def transcribe(
                 # Progress within this chunk mapped into its slice of the bar
                 seg_progress = (chunk_idx + seg.end / chunk_duration) / n_chunks
                 elapsed_total = offset + seg.end
-                _cb(
-                    min(0.10 + seg_progress * 0.85, 0.95),
-                    f"Chunk {chunk_idx + 1}/{n_chunks} — "
-                    f"{int(elapsed_total//60)}:{int(elapsed_total%60):02d} / "
-                    f"{int(total_duration//60)}:{int(total_duration%60):02d}",
-                )
+                _fire(progress_callback,
+                      min(0.10 + seg_progress * 0.85, 0.95),
+                      f"Chunk {chunk_idx + 1}/{n_chunks} — "
+                      f"{int(elapsed_total//60)}:{int(elapsed_total%60):02d} / "
+                      f"{int(total_duration//60)}:{int(total_duration%60):02d}")
 
             # Save partial progress immediately so a crash doesn't lose this chunk
             with open(partial_path, "w", encoding="utf-8") as pf:
@@ -279,7 +262,7 @@ def transcribe(
             import shutil
             shutil.rmtree(chunk_dir, ignore_errors=True)
 
-    _cb(0.97, "Saving transcript…")
+    _fire(progress_callback, 0.97, "Saving transcript…")
     source_path = audio_path if video_path is None else video_path
     stem = os.path.splitext(os.path.basename(source_path))[0]
     transcript_path = os.path.join(output_dir, f"{stem}_transcript.json")
@@ -295,7 +278,7 @@ def transcribe(
                 logger = logging.getLogger(__name__)
                 logger.warning("Failed to remove partial chunk file %s: %s", fname, exc)
 
-    _cb(1.0, "Transcription complete.")
+    _fire(progress_callback, 1.0, "Transcription complete.")
     return result
 
 
@@ -341,23 +324,14 @@ def transcribe_segment(
         ]
     }
     """
-    import tempfile
-
     from faster_whisper import WhisperModel
 
     if video_path is None and audio_path is None:
         raise ValueError("Either video_path or audio_path must be provided.")
 
-    if device == "auto":
-        device, compute_type = detect_device()
-    else:
-        compute_type = _compute_type_for_device(device)
+    device, compute_type = _resolve_device(device)
 
-    def _cb(fraction: float, label: str):
-        if progress_callback:
-            progress_callback(fraction, label)
-
-    _cb(0.05, "Extracting clip audio segment…")
+    _fire(progress_callback, 0.05, "Extracting clip audio segment…")
 
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp.close()
@@ -394,14 +368,14 @@ def transcribe_segment(
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg segment audio extraction failed:\n{result.stderr.strip()}")
 
-        _cb(0.15, f"Loading Whisper model ({model_size})…")
+        _fire(progress_callback, 0.15, f"Loading Whisper model ({model_size})…")
         model = WhisperModel(model_size, device=device, compute_type=compute_type)
 
         transcribe_kwargs = dict(word_timestamps=True, beam_size=5)
         if language:
             transcribe_kwargs["language"] = language
 
-        _cb(0.25, "Transcribing segment…")
+        _fire(progress_callback, 0.25, "Transcribing segment…")
         segments_iter, info = model.transcribe(tmp_path, **transcribe_kwargs)
 
         segment_duration = end - start
@@ -424,7 +398,7 @@ def transcribe_segment(
                 "words": words,
             })
 
-        _cb(0.95, "Done.")
+        _fire(progress_callback, 0.95, "Done.")
 
         return {
             "language": info.language,

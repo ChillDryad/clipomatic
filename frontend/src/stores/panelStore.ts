@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { persist, createJSONStorage } from 'zustand/middleware'
 
 export type PanelPosition = 'left' | 'right' | 'bottom'
 export type PanelId = 'media' | 'preview' | 'properties' | 'timeline'
@@ -46,48 +45,34 @@ const INITIAL_STATE: Omit<PanelState, 'setPanelSize' | 'setPanelVisibility' | 't
   },
 }
 
-export const usePanelStore = create<PanelState>()(
-  persist(
-    (set, get) => ({
-      ...INITIAL_STATE,
+export const usePanelStore = create<PanelState>()((set) => ({
+  ...INITIAL_STATE,
 
-      setPanelSize: (panelId, size) => {
-        set(state => ({
-          sizes: { ...state.sizes, [panelId]: size },
-        }))
-      },
+  setPanelSize: (panelId, size) => {
+    set(state => ({
+      sizes: { ...state.sizes, [panelId]: size },
+    }))
+  },
 
-      setPanelVisibility: (panelId, visible) => {
-        set(state => ({
-          visibility: { ...state.visibility, [panelId]: visible },
-        }))
-      },
+  setPanelVisibility: (panelId, visible) => {
+    set(state => ({
+      visibility: { ...state.visibility, [panelId]: visible },
+    }))
+  },
 
-      togglePanelMinimize: (panelId) => {
-        set(state => ({
-          minimized: { ...state.minimized, [panelId]: !state.minimized[panelId] },
-        }))
-      },
+  togglePanelMinimize: (panelId) => {
+    set(state => ({
+      minimized: { ...state.minimized, [panelId]: !state.minimized[panelId] },
+    }))
+  },
 
-      togglePanelCollapse: (panelId) => {
-        set(state => ({
-          collapsed: { ...state.collapsed, [panelId]: !state.collapsed[panelId] },
-        }))
-      },
+  togglePanelCollapse: (panelId) => {
+    set(state => ({
+      collapsed: { ...state.collapsed, [panelId]: !state.collapsed[panelId] },
+    }))
+  },
 
-      resetLayout: () => {
-        set(INITIAL_STATE)
-      },
-    }),
-    {
-      name: 'momiji-panel-storage',
-      storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({
-        sizes: state.sizes,
-        visibility: state.visibility,
-        minimized: state.minimized,
-        collapsed: state.collapsed,
-      }),
-    }
-  )
-)
+  resetLayout: () => {
+    set(INITIAL_STATE)
+  },
+}))

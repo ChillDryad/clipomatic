@@ -1,10 +1,13 @@
-import { useState } from 'react'
-import { uploadFile, downloadUrl, streamTwitchAudio, checkTwitchCache, listTwitchVods, twitchAuthorizeUrl, createProject, parseApiError, getAbortController, cancelOperation, type TwitchVod } from '../../api'
+import { useState, useEffect } from 'react'
+import { uploadFile, downloadUrl, streamTwitchAudio, checkTwitchCache, listTwitchVods, twitchAuthorizeUrl, createProject, parseApiError, getAbortController, cancelOperation, type TwitchVod, getProjectPipelineState } from '../../api'
 import { ProgressBar } from '../ui/ProgressBar'
 import { usePipeline } from '../../context/PipelineContext'
+import { formatDuration } from '../../utils/format'
+import { Button } from '../../components/ui/Button'
+import { Input } from '../../components/ui/Input'
 
 export function StepIngest() {
-  const { setSource, setProjectId } = usePipeline()
+  const { setSource, setProjectId, projectId } = usePipeline()
   const [tab, setTab] = useState<'upload' | 'url' | 'twitch' | 'my-vods'>('upload')
   const [progress, setProgress] = useState<{ value: number; label: string } | null>(null)
   const [error, setError] = useState<{ message: string; suggestion?: string } | null>(null)
@@ -19,6 +22,33 @@ export function StepIngest() {
   const [vodLoading, setVodLoading] = useState(false)
   const [vodError, setVodError] = useState<{ message: string; suggestion?: string } | null>(null)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [hasExistingProject, setHasExistingProject] = useState(false)
+
+  // Check for existing project state on mount
+  useEffect(() => {
+    if (!projectId) return
+    getProjectPipelineState(projectId)
+      .then((state) => {
+        if (state.transcript || state.clips) {
+          setHasExistingProject(true)
+          if (state.transcript) {
+            // Auto-load transcript if available
+            // This will be picked up by StepTranscribe
+          }
+          if (state.clips) {
+            // Auto-load clips if available
+            // This will be picked up by StepHighlights
+          }
+        }
+      })
+      .catch(() => {})
+  }, [projectId])
+
+  // New state for video naming
+  const [videoName, setVideoName] = useState('')
+  const [showNameInput, setShowNameInput] = useState(false)
+  const [pendingVideoPath, setPendingVideoPath] = useState<string | null>(null)
+  const [videoTitle, setVideoTitle] = useState<string | null>(null)
 
   const prog = (value: number, label: string) => setProgress({ value, label })
 
@@ -33,25 +63,44 @@ export function StepIngest() {
     }
   }
 
-  // Helper to create project and redirect
-  const handleSourceSet = async (videoPath: string | null, audioPath: string | null, twitchUrl: string | null, transcript: import('../../types').Transcript | null, videoUrl: string | null = null) => {
-    // First set the source in pipeline context - this navigates to transcribe step
-    setSource({ videoPath, audioPath, twitchUrl, videoUrl: videoUrl ?? null }, transcript)
-
-    // Then create a VideoProject in the background (don't redirect yet)
+  // Helper to create project with name
+  const handleCreateProject = async (sourcePath: string, displayName: string, videoUrl: string | null = null, duration: number | null = null) => {
     try {
-      const filename = videoPath?.split('/').pop()?.replace(/\.[^.]+$/, '') || audioPath?.split('/').pop() || 'Unknown'
       const project = await createProject({
-        source_path: videoPath || audioPath || '',
-        original_filename: filename || 'Unknown',
+        source_path: sourcePath,
+        original_filename: displayName,
+        duration: duration || undefined,
       })
-      // Store project ID in context for downstream steps
       setProjectId(project.id)
-      // Note: We stay on the pipeline page so user can run transcription/highlights
-      // Project page redirect happens after clips are detected
+      return project
     } catch (err) {
       console.error('Failed to create project:', err)
-      // Continue without project creation if it fails
+      throw err
+    }
+  }
+
+  // Handle duplicate redirect
+  const handleDuplicateRedirect = (projectId: string, url: string) => {
+    setError({
+      message: 'This video already exists in your library',
+      suggestion: `Redirecting to existing project...`,
+    })
+    setTimeout(() => {
+      window.location.href = url
+    }, 2000)
+  }
+
+  const handleNameSubmit = async () => {
+    if (!videoName.trim() || !pendingVideoPath) return
+    try {
+      const project = await handleCreateProject(pendingVideoPath, videoName.trim())
+      setSource({ videoPath: pendingVideoPath, audioPath: null, twitchUrl: null, videoUrl: null }, null)
+      setProjectId(project.id)
+      setShowNameInput(false)
+      setVideoName('')
+      setPendingVideoPath(null)
+    } catch (err) {
+      setError(parseApiError(err))
     }
   }
 
@@ -61,11 +110,16 @@ export function StepIngest() {
     setError(null)
     setProgress({ value: 0, label: 'Starting upload…' })
     setIsCancelling(false)
+    setVideoName('')
+    setShowNameInput(false)
     try {
       const controller = getAbortController('upload')
-      const videoPath = await uploadFile(file, prog, controller.signal)
+      const result = await uploadFile(file, prog, controller.signal)
       setProgress(null)
-      await handleSourceSet(videoPath, null, null, null, null)
+      // Show name input after upload completes
+      setPendingVideoPath(result.videoPath)
+      setVideoName(file.name.replace(/\.[^.]+$/, '')) // Pre-fill with filename minus extension
+      setShowNameInput(true)
     } catch (err) {
       setProgress(null)
       if (String(err).includes('cancelled')) {
@@ -83,11 +137,23 @@ export function StepIngest() {
     setError(null)
     setProgress({ value: 0, label: 'Starting download…' })
     setIsCancelling(false)
+    setVideoTitle(null)
     try {
       const controller = getAbortController('download')
-      const videoPath = await downloadUrl(urlInput.trim(), prog, controller.signal)
+      const result = await downloadUrl(urlInput.trim(), prog, controller.signal)
       setProgress(null)
-      await handleSourceSet(videoPath, null, null, null, urlInput.trim())
+
+      // Check if server detected a duplicate
+      if (result.redirect && result.projectId && result.url) {
+        handleDuplicateRedirect(result.projectId, result.url)
+        return
+      }
+
+      // Auto-name from video title or URL
+      const displayName = result.videoTitle || urlInput.trim().split('/').pop() || 'Unknown Video'
+      const project = await handleCreateProject(result.videoPath, displayName, urlInput.trim(), result.duration)
+      setSource({ videoPath: result.videoPath, audioPath: null, twitchUrl: null, videoUrl: urlInput.trim() }, null)
+      setProjectId(project.id)
     } catch (err) {
       setProgress(null)
       if (String(err).includes('cancelled')) {
@@ -139,7 +205,7 @@ export function StepIngest() {
   const handleLoadCached = async () => {
     if (!twitchCache?.cached || !twitchCache.transcript) return
     const audioPath = twitchCache.audio_path ?? null
-    await handleSourceSet(null, audioPath, twitchInput.trim(), twitchCache.transcript, null)
+    setSource({ videoPath: null, audioPath, twitchUrl: twitchInput.trim(), videoUrl: null }, twitchCache.transcript)
   }
 
   const handleTwitchStream = async () => {
@@ -147,11 +213,25 @@ export function StepIngest() {
     setError(null)
     setProgress({ value: 0, label: 'Fetching stream info…' })
     setIsCancelling(false)
+    setVideoTitle(null)
     try {
       const controller = getAbortController('twitch-stream')
-      const audioPath = await streamTwitchAudio(twitchInput.trim(), prog, controller.signal)
+      const result = await streamTwitchAudio(twitchInput.trim(), prog, controller.signal)
       setProgress(null)
-      await handleSourceSet(null, audioPath, twitchInput.trim(), null, null)
+
+      // Check if server detected a duplicate
+      if (result.redirect && result.projectId && result.url) {
+        handleDuplicateRedirect(result.projectId, result.url)
+        return
+      }
+
+      // Auto-name from VOD title
+      const displayName = result.videoTitle || `Twitch VOD ${twitchInput.split('/').pop()}`
+      const audioPath = result.audioPath
+      if (!audioPath) throw new Error('No audio path returned from server')
+      const project = await handleCreateProject(audioPath, displayName, twitchInput.trim(), result.duration ?? null)
+      setSource({ videoPath: null, audioPath, twitchUrl: twitchInput.trim(), videoUrl: null }, null)
+      setProjectId(project.id)
     } catch (err) {
       setProgress(null)
       if (String(err).includes('cancelled')) {
@@ -173,6 +253,14 @@ export function StepIngest() {
 
   return (
     <div className="space-y-6">
+      {hasExistingProject && (
+        <div className="glass-card p-3 border-l-4 border-[var(--ctp-green)]">
+          <p className="text-sm text-[var(--ctp-green)]">
+            This project already has processed data. Navigate to the Transcript or Highlights step to continue.
+          </p>
+        </div>
+      )}
+
       {/* Tab bar */}
       <div className="flex gap-2 p-1">
         {tabs.map((t) => (
@@ -192,19 +280,55 @@ export function StepIngest() {
 
       {/* Upload */}
       {tab === 'upload' && (
-        <div className="flex flex-col items-center py-6">
-          <label className="glass-dropzone w-48 h-48 flex flex-col items-center justify-center cursor-pointer">
-            <span className="text-3xl mb-2">📁</span>
-            <span className="text-sm text-[var(--ctp-subtext)]">Drop MP4/MKV here</span>
-            <span className="text-xs text-[var(--ctp-subtext)] opacity-70 mt-1">or click to browse</span>
-            <input
-              type="file"
-              accept=".mp4,.mkv"
-              onChange={handleUpload}
-              disabled={!!progress}
-              className="hidden"
-            />
-          </label>
+        <div className="flex flex-col items-center py-6 space-y-4">
+          {!showNameInput ? (
+            <label className="glass-dropzone w-48 h-48 flex flex-col items-center justify-center cursor-pointer">
+              <span className="text-3xl mb-2">📁</span>
+              <span className="text-sm text-[var(--ctp-subtext)]">Drop MP4/MKV here</span>
+              <span className="text-xs text-[var(--ctp-subtext)] opacity-70 mt-1">or click to browse</span>
+              <input
+                type="file"
+                accept=".mp4,.mkv,.mov,.avi,.webm"
+                onChange={handleUpload}
+                disabled={!!progress}
+                className="hidden"
+              />
+            </label>
+          ) : (
+            <div className="glass-card p-6 w-full max-w-md space-y-4">
+              <h3 className="text-lg font-semibold text-[var(--ctp-text)]">Name Your Video</h3>
+              <p className="text-sm text-[var(--ctp-subtext)]">
+                Give your video a descriptive name to help you identify it later.
+              </p>
+              <Input
+                label="Video Name"
+                value={videoName}
+                onChange={(e) => setVideoName(e.target.value)}
+                placeholder="e.g. Best Gaming Moments - Stream Highlights"
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleNameSubmit}
+                  disabled={!videoName.trim()}
+                  variant="primary"
+                  className="flex-1"
+                >
+                  Continue
+                </Button>
+                <Button
+                  onClick={() => {
+                    setShowNameInput(false)
+                    setPendingVideoPath(null)
+                    setVideoName('')
+                  }}
+                  variant="secondary"
+                >
+                  Back
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -421,12 +545,6 @@ export function StepIngest() {
   )
 }
 
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = Math.floor(seconds % 60)
-  return h > 0 ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`
-}
 
 function formatViews(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`

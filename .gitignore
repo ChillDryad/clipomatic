@@ -3,6 +3,7 @@
 
 # Runtime data
 workspace/
+data/
 
 # Python
 __pycache__/
@@ -17,5 +18,9 @@ build/
 # macOS
 .DS_Store
 
+# Test artifacts
+cov_html/
+.coverage
+frontend/node_modules/*
 # Docker
 *.log

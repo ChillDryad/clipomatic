@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git mv *)",
+      "Bash(cat)",
+      "Bash(bash /tmp/final_check.sh)",
+      "Bash(bash /tmp/check_subdirs.sh)",
+      "Bash(git -C /Users/dryad/Documents/code/momiji-clipper log --oneline -10)",
+      "Bash(git -C /Users/dryad/Documents/code/momiji-clipper log --diff-filter=D --summary --oneline -- '*.py')",
+      "Bash(git -C /Users/dryad/Documents/code/momiji-clipper show 43109bd --stat)",
+      "Bash(git -C /Users/dryad/Documents/code/momiji-clipper show d53923c --stat)",
+      "Bash(git -C /Users/dryad/Documents/code/momiji-clipper show ef36e2d --stat)",
+      "Bash(git -C /Users/dryad/Documents/code/momiji-clipper status --short)"
+    ]
+  }
+}

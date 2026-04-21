@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from '../components/ui/Button'
 import { frameUrl } from '../api'
 import type { Clip } from '../types'
+import { formatDate, formatDuration, formatTime } from '../utils/format'
+import { getRoleBadgeClass } from '../utils/roles'
+import { useVirtualizer } from '@tanstack/react-virtual'
 
 interface VideoProject {
   id: string
@@ -97,45 +100,6 @@ export function VideoProjectPage() {
       else next.add(clipId)
       return next
     })
-  }
-
-  const formatTime = (seconds: number): string => {
-    const m = Math.floor(seconds / 60)
-    const s = Math.floor(seconds % 60)
-    return `${m}:${s.toString().padStart(2, '0')}`
-  }
-
-  const formatDuration = (seconds: number | null): string => {
-    if (seconds === null) return 'Unknown'
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    const s = Math.floor(seconds % 60)
-    if (h > 0) return `${h}h ${m}m ${s}s`
-    return `${m}m ${s}s`
-  }
-
-  const formatDate = (timestamp: number): string => {
-    return new Date(timestamp * 1000).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    })
-  }
-
-  const getRoleBadgeColor = (role: string): string => {
-    switch (role) {
-      case 'owner': return 'bg-[var(--ctp-mauve)]/20 text-[var(--ctp-mauve)] border-[var(--ctp-mauve)]/30'
-      case 'admin': return 'bg-[var(--ctp-blue)]/20 text-[var(--ctp-blue)] border-[var(--ctp-blue)]/30'
-      case 'editor': return 'bg-[var(--ctp-green)]/20 text-[var(--ctp-green)] border-[var(--ctp-green)]/30'
-      case 'viewer': return 'bg-[var(--ctp-overlay)]/20 text-[var(--ctp-subtext)] border-[var(--ctp-overlay)]/30'
-      default: return 'bg-[var(--ctp-surface-1)] text-[var(--ctp-subtext)]'
-    }
-  }
-
-  const getViralityBadgeColor = (score: number): string => {
-    if (score >= 80) return 'bg-[var(--ctp-green)]/20 text-[var(--ctp-green)] border-[var(--ctp-green)]/30'
-    if (score >= 60) return 'bg-[var(--ctp-yellow)]/20 text-[var(--ctp-yellow)] border-[var(--ctp-yellow)]/30'
-    return 'bg-[var(--ctp-overlay)]/20 text-[var(--ctp-subtext)] border-[var(--ctp-overlay)]/30'
   }
 
   if (loading) {
@@ -235,7 +199,7 @@ export function VideoProjectPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Clips List */}
+        {/* Clips List - Virtualized */}
         <div className="lg:col-span-2 space-y-4">
           <h2 className="text-base font-semibold text-[var(--ctp-text)]">
             Detected Clips ({clips.length})
@@ -249,67 +213,28 @@ export function VideoProjectPage() {
               </Link>
             </div>
           ) : (
-            <div className="space-y-2" role="list" aria-label="Detected clips">
-              {sortedClips.map((clip) => {
-                const clipKey = clip.id || `idx-${clip.index}`
-                return (
-                <div key={clipKey} className="glass-card p-3" role="listitem">
-                  <div className="flex items-start gap-3">
-                    <label htmlFor={`clip-checkbox-${clipKey}`} className="sr-only">
-                      Select {clip.title}
-                    </label>
-                    <input
-                      id={`clip-checkbox-${clipKey}`}
-                      type="checkbox"
-                      checked={selectedClipIds.has(clipKey)}
-                      onChange={() => toggleClip(clipKey)}
-                      className="mt-0.5 accent-[var(--ctp-mauve)] w-4 h-4 cursor-pointer"
-                    />
+            <>
+              {/* Virtualized clip list container */}
+              <div
+                role="list"
+                aria-label="Detected clips"
+                className="space-y-2"
+                ref={(el) => {
+                  // Virtualizer will be initialized below
+                }}
+              >
+                <ClipListVirtual clips={sortedClips} selectedIds={selectedClipIds} onToggle={toggleClip} projectId={project.id} />
+              </div>
 
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-[var(--ctp-text)] truncate">{clip.title}</h3>
-                      <p className="text-xs text-[var(--ctp-subtext)] mt-0.5">
-                        {formatTime(clip.start)} - {formatTime(clip.end)}
-                      </p>
-                      <div className="flex gap-1.5 mt-1.5 flex-wrap">
-                        {clip.hashtags.slice(0, 3).map(tag => (
-                          <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--ctp-surface-1)] text-[var(--ctp-subtext)]">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                      {clip.brand_alignment.length > 0 && (
-                        <p className="text-[10px] text-[var(--ctp-subtext)] mt-1 truncate">
-                          {clip.brand_alignment.join(', ')}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="flex flex-col gap-1.5 shrink-0">
-                      <span className={`text-xs px-2 py-1 rounded font-medium border ${getViralityBadgeColor(clip.virality_score)}`}>
-                        {clip.virality_score}
-                      </span>
-
-                      <Link
-                        to={`/video/${project.id}/timeline/${clip.id || clip.index}`}
-                        className="btn-secondary text-xs py-1"
-                      >
-                        Edit
-                      </Link>
-                    </div>
-                  </div>
+              {/* Batch Actions */}
+              {selectedClipIds.size > 0 && (
+                <div className="glass-card p-4 flex gap-3 items-center sticky bottom-4">
+                  <span className="text-[var(--ctp-subtext)]">{selectedClipIds.size} selected</span>
+                  <Button variant="primary">Render Selected</Button>
+                  <Button variant="secondary">Schedule Posts</Button>
                 </div>
-              )})}
-            </div>
-          )}
-
-          {/* Batch Actions */}
-          {selectedClipIds.size > 0 && (
-            <div className="glass-card p-4 flex gap-3 items-center sticky bottom-4">
-              <span className="text-[var(--ctp-subtext)]">{selectedClipIds.size} selected</span>
-              <Button variant="primary">Render Selected</Button>
-              <Button variant="secondary">Schedule Posts</Button>
-            </div>
+              )}
+            </>
           )}
         </div>
 
@@ -335,7 +260,7 @@ export function VideoProjectPage() {
                         )}
                       </div>
                     </div>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium border ${getRoleBadgeColor(member.role)}`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium border ${getRoleBadgeClass(member.role)}`}>
                       {member.role}
                     </span>
                   </div>
@@ -386,6 +311,113 @@ export function VideoProjectPage() {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// Virtualized clip list component for performance with large clip counts
+interface ClipListVirtualProps {
+  clips: Clip[]
+  selectedIds: Set<string>
+  onToggle: (clipId: string) => void
+  projectId: string
+}
+
+const getViralityBadgeColor = (score: number): string => {
+  if (score >= 80) return 'bg-[var(--ctp-green)]/20 text-[var(--ctp-green)] border-[var(--ctp-green)]/30'
+  if (score >= 60) return 'bg-[var(--ctp-yellow)]/20 text-[var(--ctp-yellow)] border-[var(--ctp-yellow)]/30'
+  return 'bg-[var(--ctp-overlay)]/20 text-[var(--ctp-subtext)] border-[var(--ctp-overlay)]/30'
+}
+
+function ClipListVirtual({ clips, selectedIds, onToggle, projectId }: ClipListVirtualProps) {
+  const parentRef = useRef<HTMLDivElement>(null)
+
+  const virtualizer = useVirtualizer({
+    count: clips.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 100, // Estimate each clip item height
+    overscan: 2, // Render 2 items above/below viewport
+  })
+
+  return (
+    <div
+      ref={parentRef}
+      className="max-h-[600px] overflow-auto"
+      style={{ contain: 'strict' }}
+    >
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const clip = clips[virtualRow.index]
+          const clipKey = clip.id || `idx-${clip.index}`
+
+          return (
+            <div
+              key={clipKey}
+              className="glass-card p-3"
+              role="listitem"
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: `${virtualRow.size}px`,
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              <div className="flex items-start gap-3">
+                <label htmlFor={`clip-checkbox-${clipKey}`} className="sr-only">
+                  Select {clip.title}
+                </label>
+                <input
+                  id={`clip-checkbox-${clipKey}`}
+                  type="checkbox"
+                  checked={selectedIds.has(clipKey)}
+                  onChange={() => onToggle(clipKey)}
+                  className="mt-0.5 accent-[var(--ctp-mauve)] w-4 h-4 cursor-pointer"
+                />
+
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-[var(--ctp-text)] truncate">{clip.title}</h3>
+                  <p className="text-xs text-[var(--ctp-subtext)] mt-0.5">
+                    {formatTime(clip.start)} - {formatTime(clip.end)}
+                  </p>
+                  <div className="flex gap-1.5 mt-1.5 flex-wrap">
+                    {clip.hashtags.slice(0, 3).map(tag => (
+                      <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--ctp-surface-1)] text-[var(--ctp-subtext)]">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                  {clip.brand_alignment.length > 0 && (
+                    <p className="text-[10px] text-[var(--ctp-subtext)] mt-1 truncate">
+                      {clip.brand_alignment.join(', ')}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  <span className={`text-xs px-2 py-1 rounded font-medium border ${getViralityBadgeColor(clip.virality_score)}`}>
+                    {clip.virality_score}
+                  </span>
+
+                  <Link
+                    to={`/video/${projectId}/timeline/${clip.id || clip.index}`}
+                    className="btn-secondary text-xs py-1"
+                  >
+                    Edit
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

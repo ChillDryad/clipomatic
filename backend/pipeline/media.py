@@ -6,7 +6,9 @@ Includes security validation: extension whitelist, MIME type detection, magic by
 """
 
 import asyncio
+import json
 import os
+import subprocess
 import uuid
 from dataclasses import dataclass
 from typing import Callable
@@ -93,10 +95,7 @@ def _get_asset_type(filename: str) -> str:
 
 
 def get_video_dimensions(video_path: str) -> tuple[int, int]:
-    """Get video dimensions using ffprobe."""
-    import subprocess
-    import json
-
+    """Return (width, height) of the video using ffprobe."""
     cmd = [
         "ffprobe", "-v", "quiet",
         "-hide_banner",
@@ -107,15 +106,55 @@ def get_video_dimensions(video_path: str) -> tuple[int, int]:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffprobe failed: {result.stderr.strip()}")
-
-    data = json.loads(result.stdout)
-    streams = data.get("streams", [])
+        raise RuntimeError(f"ffprobe failed (code {result.returncode}):\n{result.stderr.strip()}")
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"ffprobe returned invalid JSON: {result.stdout[:200]!r} (exc: {exc})")
+    if not isinstance(data, dict) or "streams" not in data:
+        raise RuntimeError(f"ffprobe returned unexpected structure: {result.stdout[:200]!r}")
+    streams = data["streams"]
     if not streams:
-        raise RuntimeError("No video stream found")
-
+        raise RuntimeError(f"ffprobe: no video streams found for {video_path!r}")
     stream = streams[0]
+    if "width" not in stream or "height" not in stream:
+        raise RuntimeError(f"ffprobe: stream missing width/height: {stream}")
     return int(stream["width"]), int(stream["height"])
+
+
+def extract_frame(video_path: str, timestamp: float, output_dir: str) -> str:
+    """Extract a single frame from the video at the given timestamp. Returns the JPEG path."""
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, f"frame_{timestamp:.2f}.jpg")
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(timestamp),
+        "-i", video_path,
+        "-vframes", "1",
+        "-q:v", "2",
+        out_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Frame extraction failed:\n{result.stderr.strip()}")
+    return out_path
+
+
+def get_media_duration(media_path: str) -> float:
+    """Return duration in seconds of any media file via ffprobe. Returns 0.0 on failure."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "json",
+        media_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        return 0.0
+    try:
+        return float(json.loads(result.stdout)["format"]["duration"])
+    except (KeyError, ValueError, json.JSONDecodeError):
+        return 0.0
 
 
 def get_image_dimensions(image_path: str) -> tuple[int, int]:
@@ -327,26 +366,7 @@ def list_media_assets(media_dir: str, asset_type: str | None = None) -> list[Med
 
 
 def _get_video_duration(video_path: str) -> float:
-    """Get video duration in seconds using ffprobe."""
-    import subprocess
-    import json
-
-    cmd = [
-        "ffprobe", "-v", "quiet",
-        "-hide_banner",
-        "-show_entries", "format=duration",
-        "-of", "json",
-        video_path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        return 0.0
-
-    data = json.loads(result.stdout)
-    try:
-        return float(data.get("format", {}).get("duration", 0))
-    except (ValueError, TypeError):
-        return 0.0
+    return get_media_duration(video_path)
 
 
 def delete_media_asset(file_path: str) -> bool:

@@ -1,5 +1,8 @@
 import { create } from 'zustand'
 
+/**
+ * User object returned from authentication endpoints.
+ */
 export interface User {
   id: string
   email: string
@@ -8,6 +11,11 @@ export interface User {
   created_at: number
 }
 
+/**
+ * Authentication state interface.
+ * Note: JWT tokens are stored in HttpOnly cookies, not accessible from JavaScript.
+ * This provides XSS protection - tokens cannot be stolen via XSS attacks.
+ */
 interface AuthState {
   user: User | null
   // Token is stored in HttpOnly cookie (not accessible from JS for XSS protection)
@@ -15,14 +23,45 @@ interface AuthState {
   isLoading: boolean
   error: string | null
 
+  /**
+   * Logs in a user with email/password credentials.
+   * Sets HttpOnly cookie on success.
+   */
   login: (email: string, password: string) => Promise<void>
+  /**
+   * Registers a new user account.
+   * Sets HttpOnly cookie on success.
+   */
   register: (email: string, password: string, displayName?: string) => Promise<void>
+  /**
+   * Logs out the current user and clears HttpOnly cookie.
+   */
   logout: () => Promise<void>
+  /**
+   * Initializes auth state by checking for existing session.
+   * Call this on app mount.
+   */
   initialize: () => Promise<void>
+  /**
+   * Manually sets the user object (for OAuth callbacks).
+   */
   setUser: (user: User | null) => void
+  /**
+   * Clears any authentication error message.
+   */
   clearError: () => void
 }
 
+/**
+ * Authentication store for managing user login state.
+ * Uses HttpOnly cookies for secure token storage.
+ *
+ * @example
+ * ```typescript
+ * const { user, login, logout } = useAuthStore()
+ * await login('user@example.com', 'password')
+ * ```
+ */
 export const useAuthStore = create<AuthState>()((set, get) => ({
   user: null,
   isAuthenticated: false,

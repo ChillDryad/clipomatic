@@ -352,9 +352,36 @@ Dialogue: 0,0:00:10.00,0:00:18.50,Default,,0,0,0,,{\\pos(960,980)}Oh my god, I c
 
 
 @pytest.fixture
-def test_jwt_secret():
-    """Generate a test JWT secret."""
-    return "test_secret_key_for_jwt_signing_purposes_only_12345"
+def test_jwt_keys():
+    """Generate test RSA key pair for JWT RS256 testing."""
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.backends import default_backend
+    except ImportError:
+        pytest.skip("cryptography not available")
+
+    # Generate RSA key pair
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+        backend=default_backend(),
+    )
+    public_key = private_key.public_key()
+
+    # Serialize to PEM format
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    public_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+
+    return {"private": private_pem, "public": public_pem}
 
 
 @pytest.fixture
@@ -364,39 +391,56 @@ def test_oauth_encryption_key():
 
 
 @pytest.fixture
-def auth_tokens(test_jwt_secret):
-    """Generate test JWT tokens for authentication testing."""
+def auth_tokens(test_jwt_keys):
+    """Generate test JWT tokens for authentication testing using RS256."""
     if not JWT_AVAILABLE:
         pytest.skip("PyJWT not available")
 
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.backends import default_backend
+
     user_id = "test-user-123"
     email = "test@example.com"
+
+    # Load private key for signing
+    private_key = serialization.load_pem_private_key(
+        test_jwt_keys["private"].encode(),
+        password=None,
+        backend=default_backend(),
+    )
 
     # Access token (15 minutes)
     access_payload = {
         "sub": user_id,
         "email": email,
-        "exp": datetime.utcnow() + timedelta(minutes=15),
-        "type": "access"
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+        "iat": datetime.now(timezone.utc),
+        "iss": "momiji-clipper",
+        "aud": "momiji-frontend",
     }
-    access_token = jwt.encode(access_payload, test_jwt_secret, algorithm="HS256")
+    access_token = jwt.encode(access_payload, private_key, algorithm="RS256")
 
-    # Refresh token (7 days)
+    # Refresh token (30 days)
     refresh_payload = {
         "sub": user_id,
         "type": "refresh",
-        "exp": datetime.utcnow() + timedelta(days=7)
+        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+        "iat": datetime.now(timezone.utc),
+        "iss": "momiji-clipper",
+        "aud": "momiji-frontend",
     }
-    refresh_token = jwt.encode(refresh_payload, test_jwt_secret, algorithm="HS256")
+    refresh_token = jwt.encode(refresh_payload, private_key, algorithm="RS256")
 
     # Expired token
     expired_payload = {
         "sub": user_id,
         "email": email,
-        "exp": datetime.utcnow() - timedelta(minutes=5),
-        "type": "access"
+        "exp": datetime.now(timezone.utc) - timedelta(minutes=5),
+        "iat": datetime.now(timezone.utc) - timedelta(minutes=20),
+        "iss": "momiji-clipper",
+        "aud": "momiji-frontend",
     }
-    expired_token = jwt.encode(expired_payload, test_jwt_secret, algorithm="HS256")
+    expired_token = jwt.encode(expired_payload, private_key, algorithm="RS256")
 
     return {
         "access": access_token,
@@ -541,7 +585,7 @@ async def test_user(db_session):
 
 
 @pytest_asyncio.fixture
-async def api_client(test_jwt_secret, test_oauth_encryption_key):
+async def api_client(test_jwt_keys, test_oauth_encryption_key):
     """Create a test client for the FastAPI app.
 
     Sets up test environment variables and uses httpx AsyncClient
@@ -555,11 +599,13 @@ async def api_client(test_jwt_secret, test_oauth_encryption_key):
     except ImportError:
         pytest.skip("httpx not available - install with: pip install httpx")
 
-    # Set test environment variables
-    old_jwt = os.environ.get("JWT_SECRET")
+    # Set test environment variables for RS256 JWT
+    old_jwt_private = os.environ.get("JWT_PRIVATE_KEY")
+    old_jwt_public = os.environ.get("JWT_PUBLIC_KEY")
     old_oauth = os.environ.get("OAUTH_ENCRYPTION_KEY")
 
-    os.environ["JWT_SECRET"] = test_jwt_secret
+    os.environ["JWT_PRIVATE_KEY"] = test_jwt_keys["private"]
+    os.environ["JWT_PUBLIC_KEY"] = test_jwt_keys["public"]
     os.environ["OAUTH_ENCRYPTION_KEY"] = test_oauth_encryption_key
 
     # Import app after env vars are set (avoids RuntimeError on import)
@@ -574,10 +620,15 @@ async def api_client(test_jwt_secret, test_oauth_encryption_key):
             yield client
         finally:
             # Restore original env vars
-            if old_jwt:
-                os.environ["JWT_SECRET"] = old_jwt
-            elif "JWT_SECRET" in os.environ:
-                del os.environ["JWT_SECRET"]
+            if old_jwt_private:
+                os.environ["JWT_PRIVATE_KEY"] = old_jwt_private
+            elif "JWT_PRIVATE_KEY" in os.environ:
+                del os.environ["JWT_PRIVATE_KEY"]
+
+            if old_jwt_public:
+                os.environ["JWT_PUBLIC_KEY"] = old_jwt_public
+            elif "JWT_PUBLIC_KEY" in os.environ:
+                del os.environ["JWT_PUBLIC_KEY"]
 
             if old_oauth:
                 os.environ["OAUTH_ENCRYPTION_KEY"] = old_oauth

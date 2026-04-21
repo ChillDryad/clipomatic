@@ -6,6 +6,9 @@ import { TeamMemberBadge } from '../components/ui/TeamMemberBadge'
 import { RoleSelector } from '../components/RoleSelector'
 import { TeamInviteModal } from '../components/TeamInviteModal'
 import { Modal } from '../components/ui/Modal'
+import { formatDate } from '../utils/format'
+import { getRoleBadgeClass } from '../utils/roles'
+import { LoadingSpinner } from '../components/ui/LoadingSpinner'
 import { Input } from '../components/ui/Input'
 
 interface TeamMember {
@@ -205,30 +208,12 @@ export function TeamDetailPage() {
     }
   }
 
-  const formatDate = (timestamp: number): string => {
-    return new Date(timestamp * 1000).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    })
-  }
-
   const canManageMembers = team && ['owner', 'admin'].includes(team.role)
   const isOwner = team?.role === 'owner'
   const isCurrentUser = (member: TeamMember) => member.user_id === user?.id
 
   if (loading) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="relative w-16 h-16 mx-auto">
-            <div className="absolute inset-0 rounded-full border-4 border-[var(--ctp-mauve-20)]" />
-            <div className="absolute inset-0 rounded-full border-4 border-[var(--ctp-mauve)] border-t-transparent animate-spin" />
-          </div>
-          <p className="text-[var(--ctp-subtext)] animate-pulse">Loading team...</p>
-        </div>
-      </div>
-    )
+    return <LoadingSpinner label="Loading team..." />
   }
 
   if (error && !team) {
@@ -265,12 +250,7 @@ export function TeamDetailPage() {
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold text-[var(--ctp-text)]">{team?.name}</h1>
                 {team && (
-                  <span className={`text-xs px-2 py-1 rounded font-medium border ${
-                    team.role === 'owner' ? 'bg-[var(--ctp-mauve-20)] text-[var(--ctp-mauve)] border-[var(--ctp-mauve-30)]' :
-                    team.role === 'admin' ? 'bg-[var(--ctp-blue-20)] text-[var(--ctp-blue)] border-[var(--ctp-blue-30)]' :
-                    team.role === 'editor' ? 'bg-[var(--ctp-green-20)] text-[var(--ctp-green)] border-[var(--ctp-green-30)]' :
-                    'bg-[var(--ctp-overlay-20)] text-[var(--ctp-subtext)] border-[var(--ctp-overlay-30)]'
-                  }`}>
+                  <span className={`text-xs px-2 py-1 rounded font-medium border ${getRoleBadgeClass(team.role)}`}>
                     {team.role.charAt(0).toUpperCase() + team.role.slice(1)}
                   </span>
                 )}

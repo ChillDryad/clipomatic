@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
+import { formatDate } from '../utils/format'
 import { Modal } from '../components/ui/Modal'
+import { LoadingSpinner } from '../components/ui/LoadingSpinner'
 import {
   updateProfile,
   changePassword,
@@ -98,7 +100,7 @@ export function UserSettingsPage() {
     setSuccess(null)
 
     try {
-      const updatedUser = await updateProfile({
+      await updateProfile({
         email: email || undefined,
         display_name: displayName || undefined,
       })
@@ -202,14 +204,6 @@ export function UserSettingsPage() {
     }
   }
 
-  const formatDate = (timestamp: number): string => {
-    return new Date(timestamp * 1000).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    })
-  }
-
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     {
       id: 'profile',
@@ -250,17 +244,7 @@ export function UserSettingsPage() {
   ]
 
   if (loading && !user) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="relative w-16 h-16 mx-auto">
-            <div className="absolute inset-0 rounded-full border-4 border-[var(--ctp-mauve-20)]" />
-            <div className="absolute inset-0 rounded-full border-4 border-[var(--ctp-mauve)] border-t-transparent animate-spin" />
-          </div>
-          <p className="text-[var(--ctp-subtext)] animate-pulse">Loading settings...</p>
-        </div>
-      </div>
-    )
+    return <LoadingSpinner label="Loading settings..." />
   }
 
   return (

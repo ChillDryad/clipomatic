@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { detectHighlights, getCachedClips, addClipsToProject, parseApiError } from '../../api'
+import { detectHighlights, getCachedClips, addClipsToProject, parseApiError, checkIngestState } from '../../api'
 import { ProgressBar } from '../ui/ProgressBar'
 import { usePipeline } from '../../context/PipelineContext'
+import { ApiErrorBanner } from '../ui/ApiErrorBanner'
 
 export function StepHighlights() {
   const { transcript, config, source, clips, setClips, projectId } = usePipeline()
@@ -17,10 +18,17 @@ export function StepHighlights() {
   const durationHours = (transcript?.duration ?? 0) / 3600
   const targetCount = Math.max(4, Math.round(durationHours * 3))
 
+  // Check for cached clips on mount
   useEffect(() => {
     if (!sourcePath || clips) return
-    getCachedClips(sourcePath)
-      .then((cached) => { if (cached) setCachedCount(cached.length) })
+    checkIngestState(sourcePath)
+      .then((state) => {
+        if (state.clips_cached) {
+          getCachedClips(sourcePath)
+            .then((cached) => { if (cached) setCachedCount(cached.length) })
+            .catch(() => {})
+        }
+      })
       .catch(() => {})
   }, [sourcePath, clips])
 
@@ -73,6 +81,7 @@ export function StepHighlights() {
         config.llmModel,
         sourcePath,
         (p, label) => setProgress({ value: p, label }),
+        projectId,
       )
       setCachedCount(null)
       setClips(result)
@@ -136,31 +145,7 @@ export function StepHighlights() {
         </div>
       )}
 
-      {error && (
-        <div className="mt-3 glass-card p-3 border-l-4 border-[var(--ctp-red)]">
-          <div className="flex items-start gap-3">
-            <svg className="w-5 h-5 text-[var(--ctp-red)] shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-[var(--ctp-red)] mb-1">{error.message}</p>
-              {error.suggestion && (
-                <p className="text-xs text-[var(--ctp-subtext)] mb-2">{error.suggestion}</p>
-              )}
-              <button
-                onClick={handleDetect}
-                disabled={loading}
-                className="text-xs text-[var(--ctp-blue)] hover:text-[var(--ctp-text)] flex items-center gap-1 disabled:opacity-50"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                {loading ? 'Retrying...' : 'Retry'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {error && <ApiErrorBanner error={error} onRetry={handleDetect} retryLabel={loading ? 'Retrying...' : 'Retry'} disabled={loading} />}
     </div>
   )
 }

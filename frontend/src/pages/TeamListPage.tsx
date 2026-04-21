@@ -5,6 +5,8 @@ import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Modal } from '../components/ui/Modal'
 import { Input } from '../components/ui/Input'
+import { getRoleBadgeClass } from '../utils/roles'
+import { LoadingSpinner } from '../components/ui/LoadingSpinner'
 
 interface Team {
   id: string
@@ -77,15 +79,6 @@ export function TeamListPage() {
     }
   }
 
-  const getRoleBadgeClass = (role: string) => {
-    switch (role) {
-      case 'owner': return 'bg-[var(--ctp-mauve-20)] text-[var(--ctp-mauve)] border-[var(--ctp-mauve-30)]'
-      case 'admin': return 'bg-[var(--ctp-blue-20)] text-[var(--ctp-blue)] border-[var(--ctp-blue-30)]'
-      case 'editor': return 'bg-[var(--ctp-green-20)] text-[var(--ctp-green)] border-[var(--ctp-green-30)]'
-      case 'viewer': return 'bg-[var(--ctp-overlay-20)] text-[var(--ctp-subtext)] border-[var(--ctp-overlay-30)]'
-      default: return 'bg-[var(--ctp-surface-1)] text-[var(--ctp-subtext)]'
-    }
-  }
 
   const getTeamIcon = (team: Team) => {
     if (team.role === 'owner') return '🏠'
@@ -95,17 +88,7 @@ export function TeamListPage() {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="relative w-16 h-16 mx-auto">
-            <div className="absolute inset-0 rounded-full border-4 border-[var(--ctp-mauve-20)]" />
-            <div className="absolute inset-0 rounded-full border-4 border-[var(--ctp-mauve)] border-t-transparent animate-spin" />
-          </div>
-          <p className="text-[var(--ctp-subtext)] animate-pulse">Loading teams...</p>
-        </div>
-      </div>
-    )
+    return <LoadingSpinner label="Loading teams..." />
   }
 
   return (

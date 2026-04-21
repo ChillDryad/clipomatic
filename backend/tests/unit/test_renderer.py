@@ -12,7 +12,6 @@ import pytest
 
 from pipeline.renderer import (
     _ass_style_header,
-    _build_ass,
     _build_ass_header,
     _build_ass_word_by_word,
     _hex_to_ass,
@@ -198,56 +197,6 @@ class TestAssStyleHeader:
 # ---------------------------------------------------------------------------
 
 
-class TestBuildAss:
-    """Tests for _build_ass function."""
-
-    @pytest.fixture
-    def sample_clip(self):
-        """Sample clip for testing."""
-        return {
-            "title": "Test Clip",
-            "start": 0,
-            "end": 60,
-        }
-
-    @pytest.fixture
-    def sample_segments(self):
-        """Sample transcript segments."""
-        return [
-            {"start": 0, "end": 5, "text": "Hello world", "words": []},
-            {"start": 10, "end": 15, "text": "Second line", "words": []},
-        ]
-
-    def test_build_ass_contains_header(self, sample_clip, sample_segments):
-        """Test that built ASS contains header."""
-        ass_content = _build_ass(sample_clip, sample_segments, 1920, 1080)
-        assert "[Script Info]" in ass_content
-
-    def test_build_ass_contains_dialogues(self, sample_clip, sample_segments):
-        """Test that built ASS contains dialogue lines."""
-        ass_content = _build_ass(sample_clip, sample_segments, 1920, 1080)
-        assert "Dialogue:" in ass_content
-
-    def test_build_ass_contains_subtitle_text(self, sample_clip, sample_segments):
-        """Test that built ASS contains subtitle text."""
-        ass_content = _build_ass(sample_clip, sample_segments, 1920, 1080)
-        assert "Hello world" in ass_content
-        assert "Second line" in ass_content
-
-    def test_build_ass_timestamps_in_clip_range(self, sample_clip, sample_segments):
-        """Test that subtitle timestamps are within clip range."""
-        # This would require parsing the ASS output to verify
-        ass_content = _build_ass(sample_clip, sample_segments, 1920, 1080)
-        # Basic check: content was generated
-        assert len(ass_content) > 100
-
-    def test_build_ass_empty_segments(self, sample_clip):
-        """Test building ASS with empty segments."""
-        ass_content = _build_ass(sample_clip, [], 1920, 1080)
-        assert "[Script Info]" in ass_content
-        assert "[Events]" in ass_content
-
-
 class TestBuildAssWordByWord:
     """Tests for _build_ass_word_by_word function."""
 
@@ -325,19 +274,21 @@ class TestRendererEdgeCases:
         result = _hex_to_ass("not-a-color")
         assert isinstance(result, str)
 
-    def test_build_ass_with_special_characters(self):
-        """Test building ASS with special characters in text."""
-        segments = [{"start": 0, "end": 5, "text": "Test \\N newline", "words": []}]
+    def test_build_ass_word_by_word_special_characters(self):
+        """Test word-by-word ASS with special characters in text."""
+        segments = {"start": 0, "end": 5, "text": "Test newline", "words": [
+            {"word": "Test", "start": 0, "end": 1},
+            {"word": "newline", "start": 1.5, "end": 2.5},
+        ]}
         clip = {"start": 0, "end": 10}
-
-        ass_content = _build_ass(clip, segments, 1920, 1080)
-        # ASS should handle special characters
+        ass_content = _build_ass_word_by_word(clip, segments, 1920, 1080)
         assert len(ass_content) > 0
 
-    def test_build_ass_unicode_text(self):
-        """Test building ASS with unicode text."""
-        segments = [{"start": 0, "end": 5, "text": "日本語テスト", "words": []}]
+    def test_build_ass_word_by_word_unicode_text(self):
+        """Test word-by-word ASS with unicode text."""
+        segments = {"start": 0, "end": 5, "text": "日本語テスト", "words": [
+            {"word": "日本語テスト", "start": 0, "end": 5},
+        ]}
         clip = {"start": 0, "end": 10}
-
-        ass_content = _build_ass(clip, segments, 1920, 1080)
+        ass_content = _build_ass_word_by_word(clip, segments, 1920, 1080)
         assert "日本語テスト" in ass_content

@@ -20,6 +20,8 @@ from auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     ALGORITHM,
     REFRESH_TOKEN_EXPIRE_DAYS,
+    JWT_ISSUER,
+    JWT_AUDIENCE,
     COMMON_PASSWORDS,
     create_access_token,
     create_refresh_token,
@@ -30,6 +32,7 @@ from auth import (
     hash_password,
     validate_password_strength,
     verify_password,
+    get_jwt_public_key,
 )
 
 
@@ -197,38 +200,43 @@ class TestCreateAccessToken:
         assert isinstance(token, str)
         assert len(token) > 0
 
-    def test_create_access_token_contains_claims(self, test_jwt_secret):
+    def test_create_access_token_contains_claims(self, test_jwt_keys):
         """Test that token contains expected claims."""
         user_id = "test-user-123"
         email = "test@example.com"
         token = create_access_token(user_id, email)
 
-        payload = jwt.decode(token, test_jwt_secret, algorithms=[ALGORITHM])
+        public_key = get_jwt_public_key()
+        payload = jwt.decode(token, public_key, algorithms=[ALGORITHM])
         assert payload["sub"] == user_id
         assert payload["email"] == email
         assert "exp" in payload
+        assert payload["iss"] == JWT_ISSUER
+        assert payload["aud"] == JWT_AUDIENCE
 
-    def test_create_access_token_expiry_15_minutes(self, test_jwt_secret):
+    def test_create_access_token_expiry_15_minutes(self, test_jwt_keys):
         """Test that access token expires in 15 minutes."""
         user_id = "test-user"
         email = "test@test.com"
         token = create_access_token(user_id, email)
 
-        payload = jwt.decode(token, test_jwt_secret, algorithms=[ALGORITHM])
-        exp = datetime.utcfromtimestamp(payload["exp"])
-        now = datetime.utcnow()
+        public_key = get_jwt_public_key()
+        payload = jwt.decode(token, public_key, algorithms=[ALGORITHM])
+        exp = datetime.fromtimestamp(payload["exp"])
+        now = datetime.now(timezone.utc)
         delta = exp - now
 
         # Should be approximately 15 minutes
         assert 14 * 60 < delta.total_seconds() < 16 * 60
 
-    def test_create_access_token_different_users(self, test_jwt_secret):
+    def test_create_access_token_different_users(self, test_jwt_keys):
         """Test creating tokens for different users."""
         token1 = create_access_token("user1", "user1@test.com")
         token2 = create_access_token("user2", "user2@test.com")
 
-        payload1 = jwt.decode(token1, test_jwt_secret, algorithms=[ALGORITHM])
-        payload2 = jwt.decode(token2, test_jwt_secret, algorithms=[ALGORITHM])
+        public_key = get_jwt_public_key()
+        payload1 = jwt.decode(token1, public_key, algorithms=[ALGORITHM])
+        payload2 = jwt.decode(token2, public_key, algorithms=[ALGORITHM])
 
         assert payload1["sub"] != payload2["sub"]
         assert payload1["email"] != payload2["email"]
@@ -243,57 +251,75 @@ class TestCreateRefreshToken:
         assert isinstance(token, str)
         assert len(token) > 0
 
-    def test_create_refresh_token_contains_claims(self, test_jwt_secret):
+    def test_create_refresh_token_contains_claims(self, test_jwt_keys):
         """Test that refresh token contains expected claims."""
         user_id = "test-user-123"
         token = create_refresh_token(user_id)
 
-        payload = jwt.decode(token, test_jwt_secret, algorithms=[ALGORITHM])
+        public_key = get_jwt_public_key()
+        payload = jwt.decode(token, public_key, algorithms=[ALGORITHM])
         assert payload["sub"] == user_id
         assert payload["type"] == "refresh"
         assert "exp" in payload
+        assert payload["iss"] == JWT_ISSUER
+        assert payload["aud"] == JWT_AUDIENCE
 
-    def test_create_refresh_token_expiry_7_days(self, test_jwt_secret):
-        """Test that refresh token expires in 7 days."""
+    def test_create_refresh_token_expiry_30_days(self, test_jwt_keys):
+        """Test that refresh token expires in 30 days."""
         user_id = "test-user"
         token = create_refresh_token(user_id)
 
-        payload = jwt.decode(token, test_jwt_secret, algorithms=[ALGORITHM])
-        exp = datetime.utcfromtimestamp(payload["exp"])
-        now = datetime.utcnow()
+        public_key = get_jwt_public_key()
+        payload = jwt.decode(token, public_key, algorithms=[ALGORITHM])
+        exp = datetime.fromtimestamp(payload["exp"])
+        now = datetime.now(timezone.utc)
         delta = exp - now
 
-        # Should be approximately 7 days
-        assert 6 * 24 * 3600 < delta.total_seconds() < 8 * 24 * 3600
+        # Should be approximately 30 days
+        assert 29 * 24 * 3600 < delta.total_seconds() < 31 * 24 * 3600
 
-    def test_create_refresh_token_has_type_claim(self, test_jwt_secret):
+    def test_create_refresh_token_has_type_claim(self, test_jwt_keys):
         """Test that refresh token has type='refresh'."""
         token = create_refresh_token("user-id")
-        payload = jwt.decode(token, test_jwt_secret, algorithms=[ALGORITHM])
+        public_key = get_jwt_public_key()
+        payload = jwt.decode(token, public_key, algorithms=[ALGORITHM])
         assert payload["type"] == "refresh"
 
 
 class TestDecodeAccessToken:
     """Tests for decode_access_token function."""
 
-    def test_decode_valid_access_token(self, test_jwt_secret, auth_tokens):
+    def test_decode_valid_access_token(self, auth_tokens):
         """Test decoding a valid access token."""
         token = auth_tokens["access"]
         payload = decode_access_token(token)
 
         assert "sub" in payload
         assert "email" in payload
+        assert payload["iss"] == JWT_ISSUER
+        assert payload["aud"] == JWT_AUDIENCE
 
-    def test_decode_expired_access_token(self, test_jwt_secret):
+    def test_decode_expired_access_token(self, test_jwt_keys):
         """Test that expired access token raises 401."""
         from fastapi import HTTPException
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.backends import default_backend
+
+        private_key = serialization.load_pem_private_key(
+            test_jwt_keys["private"].encode(),
+            password=None,
+            backend=default_backend(),
+        )
 
         expired_payload = {
             "sub": "user-id",
             "email": "test@test.com",
-            "exp": datetime.utcnow() - timedelta(minutes=5),
+            "exp": datetime.now(timezone.utc) - timedelta(minutes=5),
+            "iat": datetime.now(timezone.utc) - timedelta(minutes=20),
+            "iss": JWT_ISSUER,
+            "aud": JWT_AUDIENCE,
         }
-        token = jwt.encode(expired_payload, test_jwt_secret, algorithm=ALGORITHM)
+        token = jwt.encode(expired_payload, private_key, algorithm=ALGORITHM)
 
         with pytest.raises(HTTPException) as exc_info:
             decode_access_token(token)
@@ -301,7 +327,7 @@ class TestDecodeAccessToken:
         assert exc_info.value.status_code == 401
         assert "expired" in exc_info.value.detail.lower()
 
-    def test_decode_invalid_access_token(self, test_jwt_secret):
+    def test_decode_invalid_access_token(self):
         """Test that invalid token raises 401."""
         from fastapi import HTTPException
 
@@ -310,12 +336,21 @@ class TestDecodeAccessToken:
 
         assert exc_info.value.status_code == 401
 
-    def test_decode_wrong_secret(self, test_jwt_secret):
-        """Test that token signed with different secret fails."""
-        payload = {"sub": "user", "exp": datetime.utcnow() + timedelta(minutes=15)}
-        token = jwt.encode(payload, "different_secret", algorithm=ALGORITHM)
-
+    def test_decode_wrong_key(self, test_jwt_keys):
+        """Test that token signed with different key fails."""
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.backends import default_backend
         from fastapi import HTTPException
+
+        # Generate a different key pair
+        other_private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+            backend=default_backend(),
+        )
+
+        payload = {"sub": "user", "exp": datetime.now(timezone.utc) + timedelta(minutes=15), "iat": datetime.now(timezone.utc), "iss": JWT_ISSUER, "aud": JWT_AUDIENCE}
+        token = jwt.encode(payload, other_private_key, algorithm=ALGORITHM)
 
         with pytest.raises(HTTPException):
             decode_access_token(token)
@@ -324,15 +359,17 @@ class TestDecodeAccessToken:
 class TestDecodeRefreshToken:
     """Tests for decode_refresh_token function."""
 
-    def test_decode_valid_refresh_token(self, auth_tokens, test_jwt_secret):
+    def test_decode_valid_refresh_token(self, auth_tokens):
         """Test decoding a valid refresh token."""
         token = auth_tokens["refresh"]
         payload = decode_refresh_token(token)
 
         assert "sub" in payload
         assert payload["type"] == "refresh"
+        assert payload["iss"] == JWT_ISSUER
+        assert payload["aud"] == JWT_AUDIENCE
 
-    def test_decode_refresh_token_wrong_type(self, test_jwt_secret):
+    def test_decode_refresh_token_wrong_type(self, test_jwt_keys):
         """Test that access token used as refresh token fails."""
         from fastapi import HTTPException
 
@@ -345,16 +382,27 @@ class TestDecodeRefreshToken:
         assert exc_info.value.status_code == 401
         assert "type" in exc_info.value.detail.lower()
 
-    def test_decode_expired_refresh_token(self, test_jwt_secret):
+    def test_decode_expired_refresh_token(self, test_jwt_keys):
         """Test that expired refresh token raises 401."""
         from fastapi import HTTPException
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.backends import default_backend
+
+        private_key = serialization.load_pem_private_key(
+            test_jwt_keys["private"].encode(),
+            password=None,
+            backend=default_backend(),
+        )
 
         expired_payload = {
             "sub": "user-id",
             "type": "refresh",
-            "exp": datetime.utcnow() - timedelta(days=1),
+            "exp": datetime.now(timezone.utc) - timedelta(days=1),
+            "iat": datetime.now(timezone.utc) - timedelta(days=2),
+            "iss": JWT_ISSUER,
+            "aud": JWT_AUDIENCE,
         }
-        token = jwt.encode(expired_payload, test_jwt_secret, algorithm=ALGORITHM)
+        token = jwt.encode(expired_payload, private_key, algorithm=ALGORITHM)
 
         with pytest.raises(HTTPException) as exc_info:
             decode_refresh_token(token)

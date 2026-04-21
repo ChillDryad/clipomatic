@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 
-interface RenderSettings {
+export interface RenderSettings {
   fontSize: number
   wordsPerLine: number
-  qualityPreset: 'standard' | 'production'
+  qualityPreset: 'standard' | 'production' | 'nvenc'
   captionStyle: 'karaoke' | 'capcut'
 }
 
@@ -261,13 +261,13 @@ export function TimelineToolbar({
           <div className="flex items-center gap-2">
             <label className="text-xs text-[var(--ctp-subtext)] min-w-[70px]">Quality</label>
             <div className="flex gap-1">
-              {(['standard', 'production'] as const).map(q => (
+              {(['standard', 'production', 'nvenc'] as const).map(q => (
                 <button
                   key={q}
                   onClick={() => onRenderSettingsChange({ ...renderSettings, qualityPreset: q })}
                   className={`px-2 py-1 rounded text-xs ${renderSettings.qualityPreset === q ? 'bg-[var(--ctp-mauve)] text-[var(--ctp-base)]' : 'bg-[var(--ctp-surface-1)] text-[var(--ctp-subtext)]'}`}
                 >
-                  {q}
+                  {q === 'nvenc' ? 'GPU (NVENC)' : q}
                 </button>
               ))}
             </div>

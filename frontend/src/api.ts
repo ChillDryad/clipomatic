@@ -6,6 +6,20 @@ import type { Clip, Transcript, TimelineData } from './types'
 
 const abortControllers = new Map<string, AbortController>()
 
+/**
+ * Gets or creates an AbortController for a given operation key.
+ * Use this to manage cancellable async operations like API calls.
+ *
+ * @param key - Unique identifier for the operation (e.g., 'transcribe', 'upload')
+ * @returns The AbortController instance for this operation
+ *
+ * @example
+ * ```typescript
+ * const controller = getAbortController('transcribe')
+ * fetch('/api/transcribe', { signal: controller.signal })
+ * // Later: cancelOperation('transcribe') to abort
+ * ```
+ */
 export function getAbortController(key: string): AbortController {
   const existing = abortControllers.get(key)
   if (existing) return existing
@@ -14,6 +28,18 @@ export function getAbortController(key: string): AbortController {
   return controller
 }
 
+/**
+ * Aborts and removes an operation's AbortController.
+ * Call this when the user cancels an operation or navigates away.
+ *
+ * @param key - The operation key to cancel
+ *
+ * @example
+ * ```typescript
+ * // In cleanup effect:
+ * return () => cancelOperation('transcribe')
+ * ```
+ */
 export function cancelOperation(key: string): void {
   const controller = abortControllers.get(key)
   if (controller) {
@@ -22,6 +48,9 @@ export function cancelOperation(key: string): void {
   }
 }
 
+/**
+ * Clears all abort controllers. Call this on app unmount or major navigation.
+ */
 export function clearAbortControllers(): void {
   abortControllers.clear()
 }
@@ -47,6 +76,26 @@ export interface ErrorEvent {
 
 export type SSEEvent<T = unknown> = ProgressEvent | DoneEvent<T> | ErrorEvent | { heartbeat: true }
 
+/**
+ * Reads and parses Server-Sent Events (SSE) from a response stream.
+ * Yields progress updates, completion events, and errors as they arrive.
+ *
+ * @param response - The fetch Response containing the SSE stream
+ * @param signal - Optional AbortSignal for cancellation
+ * @returns AsyncGenerator yielding SSE events
+ *
+ * @example
+ * ```typescript
+ * const response = await fetch('/api/transcribe', { ... })
+ * for await (const event of readSSE(response, signal)) {
+ *   if ('progress' in event) {
+ *     setProgress(event.progress, event.label)
+ *   } else if ('done' in event) {
+ *     setResult(event.result)
+ *   }
+ * }
+ * ```
+ */
 export async function* readSSE<T = unknown>(response: Response, signal?: AbortSignal): AsyncGenerator<SSEEvent<T>> {
   if (!response.body) throw new Error('Response has no body')
   const reader = response.body.getReader()
@@ -88,22 +137,67 @@ export async function* readSSE<T = unknown>(response: Response, signal?: AbortSi
 // Ingest
 // ---------------------------------------------------------------------------
 
+export interface IngestResult {
+  videoPath: string
+  audioPath?: string
+  contentHash?: string
+  displayName?: string
+  redirect?: boolean
+  projectId?: string
+  url?: string
+  videoTitle?: string
+  duration?: number
+}
+
+/**
+ * Uploads a video file to the server for processing.
+ * Requires a user-provided name for the video.
+ *
+ * @param file - The video file to upload (MP4, MKV, MOV, AVI, or WebM)
+ * @param onProgress - Callback for progress updates (0-100, label)
+ * @param signal - Optional AbortSignal for cancellation
+ * @returns Object with videoPath and optional contentHash
+ *
+ * @example
+ * ```typescript
+ * const result = await uploadFile(file, onProgress)
+ * console.log(`Uploaded to: ${result.videoPath}`)
+ * ```
+ */
 export async function uploadFile(
   file: File,
   onProgress: (p: number, label: string) => void,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<IngestResult> {
   const form = new FormData()
   form.append('file', file)
   const res = await fetch('/api/ingest/upload', { method: 'POST', body: form, signal, credentials: 'include' })
-  return consumeSSE<string>(res, onProgress, signal)
+  return consumeSSE<IngestResult>(res, onProgress, signal)
 }
 
+/**
+ * Downloads a video from a URL (YouTube, Twitch, Kick, etc.).
+ * Auto-names the video using metadata from the source.
+ * May return a redirect if the video already exists.
+ *
+ * @param url - The video URL to download
+ * @param onProgress - Callback for progress updates (0-100, label)
+ * @param signal - Optional AbortSignal for cancellation
+ * @returns Object with videoPath, videoTitle, duration, and optional redirect info
+ *
+ * @example
+ * ```typescript
+ * const result = await downloadUrl('https://youtube.com/watch?v=...', onProgress)
+ * if (result.redirect) {
+ *   window.location.href = result.url // Redirect to existing project
+ * }
+ * ```
+ */
 export async function downloadUrl(
   url: string,
   onProgress: (p: number, label: string) => void,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<IngestResult> {
   const res = await fetch('/api/ingest/url', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -111,14 +205,23 @@ export async function downloadUrl(
     signal,
     credentials: 'include',
   })
-  return consumeSSE<string>(res, onProgress, signal)
+  return consumeSSE<IngestResult>(res, onProgress, signal)
 }
 
+/**
+ * Streams audio from a Twitch VOD URL without storing video.
+ * Auto-names the VOD using metadata. May return a redirect if already exists.
+ *
+ * @param url - The Twitch VOD URL
+ * @param onProgress - Callback for progress updates (0-100, label)
+ * @param signal - Optional AbortSignal for cancellation
+ * @returns Object with audioPath, videoTitle, duration, and optional redirect info
+ */
 export async function streamTwitchAudio(
   url: string,
   onProgress: (p: number, label: string) => void,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<IngestResult> {
   const res = await fetch('/api/ingest/twitch/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -126,9 +229,15 @@ export async function streamTwitchAudio(
     signal,
     credentials: 'include',
   })
-  return consumeSSE<string>(res, onProgress, signal)
+  return consumeSSE<IngestResult>(res, onProgress, signal)
 }
 
+/**
+ * Checks if a Twitch URL is already cached in the workspace.
+ *
+ * @param url - The Twitch VOD URL to check
+ * @returns Object indicating cache status and optional cached data
+ */
 export async function checkTwitchCache(url: string): Promise<{
   cached: boolean
   transcript?: Transcript
@@ -139,10 +248,68 @@ export async function checkTwitchCache(url: string): Promise<{
   return res.json()
 }
 
+/**
+ * Check the ingestion state for a given source path.
+ * Returns whether video/audio file exists, and if transcript/clips are cached.
+ */
+export async function checkIngestState(sourcePath: string): Promise<{
+  file_exists: boolean
+  transcript_cached: boolean
+  clips_cached: boolean
+}> {
+  const res = await fetch(`/api/ingest/check/${encodeURIComponent(sourcePath)}`, { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+/**
+ * Get the complete pipeline state for a project.
+ * Includes cached transcript and clips if available.
+ */
+export async function getProjectPipelineState(projectId: string): Promise<{
+  project: {
+    id: string
+    source_path: string
+    original_filename: string
+    duration: number | null
+    status: string
+  }
+  transcript: Transcript | null
+  transcript_cached: boolean
+  clips: Clip[] | null
+  clips_cached: boolean
+}> {
+  const res = await fetch(`/api/projects/${projectId}/pipeline-state`, { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 // ---------------------------------------------------------------------------
 // Transcription
 // ---------------------------------------------------------------------------
 
+/**
+ * Transcribes audio/video using Whisper ASR.
+ *
+ * @param params - Transcription parameters
+ * @param params.video_path - Path to video file (optional if audio_path provided)
+ * @param params.audio_path - Path to audio file (optional if video_path provided)
+ * @param params.model_size - Whisper model size (tiny, base, small, medium, large-v3)
+ * @param params.device - Compute device (auto, cuda, cpu)
+ * @param params.language - Optional language code (e.g., 'en', 'ja')
+ * @param onProgress - Callback for progress updates (0-100, label)
+ * @param signal - Optional AbortSignal for cancellation
+ * @returns The transcript with segments and word-level timestamps
+ *
+ * @example
+ * ```typescript
+ * const transcript = await transcribe({
+ *   video_path: '/workspace/video.mp4',
+ *   model_size: 'large-v3',
+ *   device: 'auto',
+ * }, (progress) => setProgress(progress))
+ * ```
+ */
 export async function transcribe(
   params: {
     video_path?: string
@@ -150,6 +317,7 @@ export async function transcribe(
     model_size: string
     device: string
     language?: string
+    project_id?: string
   },
   onProgress: (p: number, label: string) => void,
   signal?: AbortSignal,
@@ -164,6 +332,12 @@ export async function transcribe(
   return consumeSSE<Transcript>(res, onProgress, signal)
 }
 
+/**
+ * Retrieves a cached transcript by file path.
+ *
+ * @param path - The workspace path of the source file
+ * @returns The cached transcript or null if not found
+ */
 export async function getCachedTranscript(path: string): Promise<Transcript | null> {
   const res = await fetch(`/api/transcribe/cached?path=${encodeURIComponent(path)}`, { credentials: 'include' })
   if (res.status === 404) return null
@@ -180,11 +354,12 @@ export async function detectHighlights(
   model: string,
   sourcePath: string | null,
   onProgress: (p: number, label: string) => void,
+  projectId?: string | null,
 ): Promise<Clip[]> {
   const res = await fetch('/api/highlights', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transcript, model, source_path: sourcePath }),
+    body: JSON.stringify({ transcript, model, source_path: sourcePath, project_id: projectId }),
     credentials: 'include',
   })
   return consumeSSE<Clip[]>(res, onProgress)
@@ -221,7 +396,7 @@ export async function fetchModels(): Promise<string[]> {
 // ---------------------------------------------------------------------------
 
 export async function downloadSegment(
-  url: string,
+  videoPath: string,
   start: number,
   end: number,
   onProgress: (p: number, label: string) => void,
@@ -230,7 +405,7 @@ export async function downloadSegment(
   const res = await fetch('/api/render/segment', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url, start, end }),
+    body: JSON.stringify({ url: videoPath, start, end }),
     credentials: 'include',
     signal,
   })
@@ -304,6 +479,21 @@ export async function regenerateClipMetadata(
   transcript: { segments: { start: number; end: number; text: string; words: { word: string; start: number; end: number; probability: number }[] }[] },
 ): Promise<Clip> {
   const res = await fetch(`/api/clips/${encodeURIComponent(clipId)}/regenerate-metadata`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ clip, transcript }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function generatePostDescription(
+  clipId: string,
+  clip: Clip,
+  transcript: { segments: { start: number; end: number; text: string; words: { word: string; start: number; end: number; probability: number }[] }[] },
+): Promise<{ post_body: string }> {
+  const res = await fetch(`/api/clips/${encodeURIComponent(clipId)}/generate-post-description`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -817,6 +1007,7 @@ export interface VideoProject {
   status: 'pending' | 'processing' | 'complete' | 'failed'
   created_at: number
   updated_at: number
+  clip_count?: number
 }
 
 export interface ProjectClip {
@@ -837,6 +1028,7 @@ export interface ProjectClip {
 export async function createProject(data: {
   source_path: string
   original_filename: string
+  duration?: number
 }): Promise<VideoProject> {
   const res = await fetch('/api/projects', {
     method: 'POST',
@@ -854,12 +1046,27 @@ export async function getProject(projectId: string): Promise<VideoProject> {
   return res.json()
 }
 
-export async function listProjects(teamId?: string): Promise<VideoProject[]> {
-  const url = teamId ? `/api/projects?team_id=${encodeURIComponent(teamId)}` : '/api/projects'
-  const res = await fetch(url, { credentials: 'include' })
+export interface ListProjectsResponse {
+  projects: VideoProject[]
+  total: number
+  limit: number
+  offset: number
+  has_more: boolean
+}
+
+export async function listProjects(
+  teamId?: string,
+  limit = 20,
+  offset = 0,
+): Promise<ListProjectsResponse> {
+  const params = new URLSearchParams()
+  if (teamId) params.set('team_id', teamId)
+  params.set('limit', limit.toString())
+  params.set('offset', offset.toString())
+
+  const res = await fetch(`/api/projects?${params}`, { credentials: 'include' })
   if (!res.ok) throw new Error(await res.text())
-  const data = await res.json()
-  return data.projects || data
+  return res.json()
 }
 
 export async function getProjectClips(projectId: string): Promise<ProjectClip[]> {

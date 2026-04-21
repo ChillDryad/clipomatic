@@ -1,12 +1,12 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { downloadSegment, renderClip, updateClipMetadata, regenerateClipMetadata, transcribeSegment, getAbortController, cancelOperation, type PlatformAccount } from '../../api'
+import { downloadSegment, renderClip, updateClipMetadata, regenerateClipMetadata, generatePostDescription, transcribeSegment, getAbortController, cancelOperation, type PlatformAccount } from '../../api'
 import { CropCanvas } from '../CropCanvas'
 import { ProgressBar } from '../ui/ProgressBar'
 import { ScheduleModal } from '../ScheduleModal'
 import { PlatformAccounts } from '../PlatformAccounts'
 import { usePipeline } from '../../context/PipelineContext'
-import type { CropBox, Transcript } from '../../types'
+import type { CropBox, Transcript, Clip } from '../../types'
 
 export function StepReview() {
   const { clips, source, transcript, updateClip, improvedSegments, setImprovedSegments, projectId } = usePipeline()
@@ -29,6 +29,16 @@ export function StepReview() {
       ))}
     </div>
   )
+}
+
+function generatePostBody(title: string, postBody: string, hashtags: string[]): string {
+  const lines = [
+    title,
+    '',
+    postBody || 'Check out this moment from the stream!',
+    ...hashtags.slice(0, 5),
+  ]
+  return lines.join('\n')
 }
 
 function viralityColor(score: number): string {
@@ -86,9 +96,9 @@ function ClipCard({
   const [accounts, setAccounts] = useState<PlatformAccount[]>([])
   const [start, setStart] = useState(clip.start)
   const [end, setEnd] = useState(clip.end)
-  const [fontName, setFontName] = useState('Arial Bold')
+  const [fontName, setFontName] = useState('Quicksand Bold')
   const [fontColor, setFontColor] = useState('#FFFFFF')
-  const [highlightColor, setHighlightColor] = useState('#FFFF00')
+  const [highlightColor, setHighlightColor] = useState('#FFFFFF')
   const [outlineColor, setOutlineColor] = useState('#000000')
   const [outlineWidth, setOutlineWidth] = useState(2.0)
   const [shadowColor, setShadowColor] = useState('#000000')
@@ -97,10 +107,10 @@ function ClipCard({
   const [fontSize, setFontSize] = useState(50)
   const [subtitleFadeIn, setSubtitleFadeIn] = useState(100)
   const [subtitleFadeOut, setSubtitleFadeOut] = useState(100)
-  const [captionStyle, setCaptionStyle] = useState("karaoke")
+  const [captionStyle, setCaptionStyle] = useState("capcut")
   const [wordsPerLine, setWordsPerLine] = useState(1)
   const [qualityPreset, setQualityPreset] = useState("standard")
-  const [videoDims, setVideoDims] = useState({ w: 1920, h: 1080 })
+  const [videoDims, setVideoDims] = useState<{ w: number; h: number }>({ w: 1920, h: 1080 })
   const [cropBoxes, setCropBoxes] = useState<{ gameplay: CropBox; avatar: CropBox }>({
     gameplay: { x: 0, y: 0, w: 1344, h: 1080 },
     avatar: { x: 1382, y: 594, w: 518, h: 464 },
@@ -113,6 +123,22 @@ function ClipCard({
   const [improveModel, setImproveModel] = useState('large-v3')
   const [improvedKey, setImprovedKey] = useState<string | null>(null)
   const [isCancellingRender, setIsCancellingRender] = useState(false)
+  const [postBody, setPostBody] = useState<string>('')
+  const [generatingPost, setGeneratingPost] = useState(false)
+
+  // Collapsible sections state
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    timing: true,
+    preview: false,
+    crops: false,
+    subtitles: false,
+    post: true,
+    render: true,
+  })
+
+  const toggleSection = (section: string) => {
+    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }))
+  }
 
   const handleSaveMetadata = useCallback(async () => {
     setSaveState('saving')
@@ -162,6 +188,30 @@ function ClipCard({
       console.error('Regenerate failed:', err)
     } finally {
       setRegenerating(false)
+    }
+  }
+
+  const handleGeneratePost = async () => {
+    const path = source.videoPath ?? source.audioPath ?? ''
+    if (!path) return
+    const clipKey = `${path}___${idx}`
+    setGeneratingPost(true)
+    try {
+      // Use improved transcript if available for this clip window
+      const improvedKey = `${path}___${start}___${end}`
+      const improved = improvedSegments.get(improvedKey)
+      const sourceSegments = improved
+        ? { ...transcript, segments: improved.segments.filter((s: { end: number; start: number }) => s.end > start && s.start < end) }
+        : transcript
+      const result = await generatePostDescription(clipKey, { ...clip, start, end }, sourceSegments)
+      console.log('Post description response:', result)
+      console.log('Generated post body:', result.post_body)
+      setPostBody(result.post_body)
+    } catch (err) {
+      console.error('Post generation failed:', err)
+      setError(`Post generation failed: ${err}`)
+    } finally {
+      setGeneratingPost(false)
     }
   }
 
@@ -357,19 +407,16 @@ function ClipCard({
     : null
 
   // CSS clip-path values for the live preview
-  const { gp, av, avatarZoom } = (() => {
-    const sw = videoDims.w
-    const sh = videoDims.h
-    const gp = cropBoxes.gameplay
+  const avatarZoom = (() => {
     const av = cropBoxes.avatar
     const avatarScaleX = 270 / av.w
     const avatarScaleY = 135 / av.h
-    return {
-      gp: `inset(${(gp.y / sh * 100).toFixed(1)}% ${((sw - gp.x - gp.w) / sw * 100).toFixed(1)}% ${((sh - gp.y - gp.h) / sh * 100).toFixed(1)}% ${(gp.x / sw * 100).toFixed(1)}%)`,
-      av: `inset(${(av.y / sh * 100).toFixed(1)}% ${((sw - av.x - av.w) / sw * 100).toFixed(1)}% ${((sh - av.y - av.h) / sh * 100).toFixed(1)}% ${(av.x / sw * 100).toFixed(1)}%)`,
-      avatarZoom: Math.max(avatarScaleX, avatarScaleY),
-    }
+    return Math.max(avatarScaleX, avatarScaleY)
   })()
+
+  // Safe video dimensions accessor
+  const videoW = videoDims.w ?? 1920
+  const videoH = videoDims.h ?? 1080
 
   return (
     <div className={`${viralityClipClass(clip.virality_score)} space-y-4 p-5`}>
@@ -462,24 +509,67 @@ function ClipCard({
         </div>
       )}
 
-      {/* Time controls */}
-      <div className="grid grid-cols-2 gap-3">
-        <label className="space-y-1">
-          <span className="text-xs text-[var(--ctp-subtext)]">Start (s)</span>
-          <input type="number" value={start} step={0.5} min={0}
-            onChange={(e) => setStart(Number(e.target.value))} className="input-field" />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs text-[var(--ctp-subtext)]">End (s)</span>
-          <input type="number" value={end} step={0.5} min={0}
-            onChange={(e) => setEnd(Number(e.target.value))} className="input-field" />
-        </label>
+      {/* Collapsible section: Timing */}
+      <div className="border border-[var(--ctp-overlay)] rounded-lg overflow-hidden">
+        <button
+          onClick={() => toggleSection('timing')}
+          className="w-full px-3 py-2 bg-[var(--ctp-surface)] flex items-center justify-between text-left hover:bg-[var(--ctp-surface-2)]"
+        >
+          <span className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">Timing</span>
+          <span className="text-xs text-[var(--ctp-subtext)]">{expandedSections.timing ? '−' : '+'}</span>
+        </button>
+        {expandedSections.timing && (
+          <div className="p-3 space-y-2">
+            <div className="grid grid-cols-2 gap-3">
+              <label className="space-y-1">
+                <span className="text-xs text-[var(--ctp-subtext)]">Start (s)</span>
+                <input type="number" value={start} step={0.5} min={0}
+                  onChange={(e) => setStart(Number(e.target.value))} className="input-field" />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-[var(--ctp-subtext)]">End (s)</span>
+                <input type="number" value={end} step={0.5} min={0}
+                  onChange={(e) => setEnd(Number(e.target.value))} className="input-field" />
+              </label>
+            </div>
+            {(end - start < 9 || end - start > 90) && (
+              <p className="text-xs text-[var(--ctp-yellow)]">
+                Duration is {(end - start).toFixed(1)}s — target is 9–90 seconds.
+              </p>
+            )}
+          </div>
+        )}
       </div>
-      {(end - start < 9 || end - start > 90) && (
-        <p className="text-xs text-[var(--ctp-yellow)]">
-          Duration is {(end - start).toFixed(1)}s — target is 9–90 seconds.
-        </p>
-      )}
+
+      {/* Post Preview */}
+      <div className="border border-[var(--ctp-overlay)] rounded-lg overflow-hidden">
+        <button
+          onClick={() => toggleSection('post')}
+          className="w-full px-3 py-2 bg-[var(--ctp-surface)] flex items-center justify-between text-left hover:bg-[var(--ctp-surface-2)]"
+        >
+          <span className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">Post Preview</span>
+          <span className="text-xs text-[var(--ctp-subtext)]">{expandedSections.post ? '−' : '+'}</span>
+        </button>
+        {expandedSections.post && (
+          <div className="p-3 space-y-2">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-[var(--ctp-subtext)]">Example Post</p>
+              <button
+                onClick={handleGeneratePost}
+                disabled={generatingPost}
+                className="text-xs px-2 py-1 rounded bg-[var(--ctp-overlay)] text-[var(--ctp-text)] hover:bg-[var(--ctp-mauve)] hover:text-white disabled:opacity-50"
+              >
+                {generatingPost ? 'Generating…' : 'Generate'}
+              </button>
+            </div>
+            <div className="bg-[var(--ctp-base)] border border-[var(--ctp-overlay)] rounded-lg p-3">
+              <div className="text-xs text-[var(--ctp-text)] whitespace-pre-wrap font-mono bg-[var(--ctp-surface)] p-2 rounded">
+                {generatePostBody(editableTitle, postBody, editableHashtags)}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Improve Subtitles */}
       {(videoPath || source.audioPath) && (
@@ -519,80 +609,63 @@ function ClipCard({
         </div>
       )}
 
-      {/* Live preview — 9:16 output mockup (avatar top, gameplay bottom) */}
+      {/* Live preview — collapsible */}
       {previewFrameUrl && (
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-[var(--ctp-subtext)]">Live Preview — 9:16 output</p>
-          <div className="relative mx-auto overflow-hidden rounded-lg border-2 border-[var(--ctp-mauve)] shadow-xl" style={{ width: '100%', maxWidth: 270, aspectRatio: '9/16', background: '#181825' }}>
-            {/* Avatar — TOP 50% of output: show cropped area scaled to fill */}
-            <div className="absolute left-0 top-0 w-full h-1/2 overflow-hidden bg-[#181825]">
-              <img
-                src={previewFrameUrl}
-                alt="avatar preview"
-                className="w-full h-full"
-                style={{
-                  objectFit: 'cover',
-                  objectPosition: `${(cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoDims.w * 100}% ${(cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoDims.h * 100}%`,
-                  // Scale to fill: the avatar crop box should fill the entire top half (270x135)
-                  transform: `scale(${avatarZoom})`,
-                  transformOrigin: `${(cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoDims.w * 100}% ${(cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoDims.h * 100}%`,
-                }}
-                onError={(e) => {
-                  const img = e.target as HTMLImageElement
-                  img.style.display = 'none'
-                  if (img.parentElement) {
-                    img.parentElement.style.background = '#333'
-                  }
-                }}
-              />
+        <div className="border border-[var(--ctp-overlay)] rounded-lg overflow-hidden">
+          <button
+            onClick={() => toggleSection('preview')}
+            className="w-full px-3 py-2 bg-[var(--ctp-surface)] flex items-center justify-between text-left hover:bg-[var(--ctp-surface-2)]"
+          >
+            <span className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">Preview (9:16)</span>
+            <span className="text-xs text-[var(--ctp-subtext)]">{expandedSections.preview ? '−' : '+'}</span>
+          </button>
+          {expandedSections.preview && (
+            <div className="p-3 space-y-2">
+              <div className="relative mx-auto overflow-hidden rounded-lg border-2 border-[var(--ctp-mauve)] shadow-xl" style={{ width: '100%', maxWidth: 270, aspectRatio: '9/16', background: '#181825' }}>
+                <div className="absolute left-0 top-0 w-full h-1/2 overflow-hidden bg-[#181825]">
+                  <img src={previewFrameUrl} alt="avatar preview" className="w-full h-full" style={{ objectFit: 'cover', objectPosition: `${(cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoW * 100}% ${(cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoH * 100}%`, transform: `scale(${avatarZoom})`, transformOrigin: `${(cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoW * 100}% ${(cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoH * 100}%` }} onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.parentElement?.style.setProperty('background', '#333') }} />
+                </div>
+                <div className="absolute left-0 bottom-0 w-full h-1/2 overflow-hidden bg-[#181825]">
+                  <img src={previewFrameUrl} alt="gameplay preview" className="w-full h-full" style={{ objectFit: 'cover', objectPosition: `${(cropBoxes.gameplay.x + cropBoxes.gameplay.w / 2) / videoW * 100}% ${(cropBoxes.gameplay.y + cropBoxes.gameplay.h / 2) / videoH * 100}%` }} onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.parentElement?.style.setProperty('background', '#333') }} />
+                </div>
+                <div className="absolute left-0 right-0 bottom-0 flex items-center justify-center px-3 py-2 pointer-events-none" style={{ background: 'rgba(0,0,0,0.6)', height: '12%' }}>
+                  <span className="text-[10px] text-white font-medium truncate">{clip.title}</span>
+                </div>
+              </div>
             </div>
-            {/* Gameplay — BOTTOM 50% of output: show cropped area scaled to fill */}
-            <div className="absolute left-0 bottom-0 w-full h-1/2 overflow-hidden bg-[#181825]">
-              <img
-                src={previewFrameUrl}
-                alt="gameplay preview"
-                className="w-full h-full"
-                style={{
-                  objectFit: 'cover',
-                  objectPosition: `${(cropBoxes.gameplay.x + cropBoxes.gameplay.w / 2) / videoDims.w * 100}% ${(cropBoxes.gameplay.y + cropBoxes.gameplay.h / 2) / videoDims.h * 100}%`,
-                }}
-                onError={(e) => {
-                  const img = e.target as HTMLImageElement
-                  img.style.display = 'none'
-                  if (img.parentElement) {
-                    img.parentElement.style.background = '#333'
-                  }
-                }}
-              />
-            </div>
-            {/* Subtitle bar at bottom */}
-            <div
-              className="absolute left-0 right-0 bottom-0 flex items-center justify-center px-3 py-2 pointer-events-none"
-              style={{ background: 'rgba(0,0,0,0.6)', height: '12%' }}
-            >
-              <span className="text-[10px] text-white font-medium truncate">
-                {clip.title}
-              </span>
-            </div>
-          </div>
+          )}
         </div>
       )}
 
-      {/* Crop editor — full width, natural size */}
+      {/* Crop editor — collapsible */}
       {previewFrameUrl && (
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-[var(--ctp-subtext)]">Adjust Crop Areas</p>
-          <CropCanvas
-            frameUrl={previewFrameUrl}
-            videoDimensions={videoDims}
-            onChange={handleCropChange}
-          />
+        <div className="border border-[var(--ctp-overlay)] rounded-lg overflow-hidden">
+          <button
+            onClick={() => toggleSection('crops')}
+            className="w-full px-3 py-2 bg-[var(--ctp-surface)] flex items-center justify-between text-left hover:bg-[var(--ctp-surface-2)]"
+          >
+            <span className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">Crop Areas</span>
+            <span className="text-xs text-[var(--ctp-subtext)]">{expandedSections.crops ? '−' : '+'}</span>
+          </button>
+          {expandedSections.crops && (
+            <div className="p-3 space-y-2">
+              <CropCanvas frameUrl={previewFrameUrl} videoDimensions={videoDims} onChange={handleCropChange} />
+            </div>
+          )}
         </div>
       )}
 
-      {/* Subtitle styling */}
-      <div className="space-y-3">
-        <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest pt-2 border-t border-[var(--ctp-overlay)]">Subtitle Style</p>
+      {/* Subtitle styling — collapsible */}
+      <div className="border border-[var(--ctp-overlay)] rounded-lg overflow-hidden">
+        <button
+          onClick={() => toggleSection('subtitles')}
+          className="w-full px-3 py-2 bg-[var(--ctp-surface)] flex items-center justify-between text-left hover:bg-[var(--ctp-surface-2)]"
+        >
+          <span className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">Subtitle Style</span>
+          <span className="text-xs text-[var(--ctp-subtext)]">{expandedSections.subtitles ? '−' : '+'}</span>
+        </button>
+        {expandedSections.subtitles && (
+          <div className="p-3 space-y-3">
 
         <div className="grid grid-cols-2 gap-3">
           <label className="space-y-1">
@@ -714,46 +787,80 @@ function ClipCard({
               <span className="text-[10px] text-[var(--ctp-subtext)]">Near-lossless, CRF 12</span>
             </div>
           </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name={`quality-${idx}`} value="nvenc" checked={qualityPreset === "nvenc"} onChange={() => setQualityPreset("nvenc")} className="accent-[var(--ctp-mauve)]" />
+            <div>
+              <span className="text-xs text-[var(--ctp-text)] block">GPU (NVENC)</span>
+              <span className="text-[10px] text-[var(--ctp-subtext)]">Hardware encoding, fastest</span>
+            </div>
+          </label>
         </div>
+          </div>
+        )}
       </div>
 
-      {renderProgress && (
-        <div className="space-y-2">
-          <ProgressBar progress={renderProgress.value} label={renderProgress.label} />
-          <div className="flex justify-end">
-            <button
-              onClick={handleRenderCancel}
-              disabled={isCancellingRender}
-              className="text-xs text-[var(--ctp-red)] hover:text-[var(--ctp-red)]/80 disabled:opacity-50 flex items-center gap-1"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              {isCancellingRender ? 'Cancelling…' : 'Cancel'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="bg-[var(--ctp-red-10)] border border-[var(--ctp-red-30)] rounded p-3">
-          <p className="text-xs text-[var(--ctp-red)] font-mono whitespace-pre-wrap">{error}</p>
-        </div>
-      )}
-
-      <div className="flex gap-3">
-        <button onClick={handleRender} disabled={!!renderProgress || isCancellingRender} className="btn-primary">
-          {renderProgress ? 'Rendering…' : isCancellingRender ? 'Cancelling…' : 'Render Clip'}
-        </button>
-        {downloadUrl && (
-          <a href={downloadUrl} download className="btn-secondary">Download MP4</a>
-        )}
+      {/* Render Progress & Actions — collapsible */}
+      <div className="border border-[var(--ctp-overlay)] rounded-lg overflow-hidden">
         <button
-          onClick={() => setShowAccounts(true)}
-          className="btn-secondary"
+          onClick={() => toggleSection('render')}
+          className="w-full px-3 py-2 bg-[var(--ctp-surface)] flex items-center justify-between text-left hover:bg-[var(--ctp-surface-2)]"
         >
-          Platform Accounts
+          <span className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">
+            {renderProgress ? 'Rendering…' : downloadUrl ? 'Render Complete' : 'Render Clip'}
+          </span>
+          <span className="text-xs text-[var(--ctp-subtext)]">{expandedSections.render ? '−' : '+'}</span>
         </button>
+        {expandedSections.render && (
+          <div className="p-3 space-y-3">
+            {renderProgress && (
+              <div className="space-y-2">
+                <ProgressBar progress={renderProgress.value} label={renderProgress.label} />
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleRenderCancel}
+                    disabled={isCancellingRender}
+                    className="text-xs text-[var(--ctp-red)] hover:text-[var(--ctp-red)]/80 disabled:opacity-50 flex items-center gap-1"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    {isCancellingRender ? 'Cancelling…' : 'Cancel'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="bg-[var(--ctp-red-10)] border border-[var(--ctp-red-30)] rounded p-3">
+                <p className="text-xs text-[var(--ctp-red)] font-mono whitespace-pre-wrap">{error}</p>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleRender}
+                disabled={!!renderProgress || isCancellingRender}
+                className="btn-primary flex-1"
+              >
+                {renderProgress ? 'Rendering…' : isCancellingRender ? 'Cancelling…' : 'Render Clip'}
+              </button>
+              {downloadUrl && (
+                <a href={downloadUrl} download className="btn-secondary">
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download
+                </a>
+              )}
+              <button
+                onClick={() => setShowAccounts(true)}
+                className="btn-secondary"
+              >
+                Platform Accounts
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {showAccounts && (

@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { persist, createJSONStorage } from 'zustand/middleware'
 import type { TimelineState, Track, TrackSegment, Clip, CropBox, Marker } from '../types'
 
 // Unique ID generator
@@ -137,205 +136,189 @@ const INITIAL_STATE: Omit<TimelineStore, 'initializeTimeline' | 'setVideoPath' |
   canRedo: false,
 }
 
-export const useTimelineStore = create<TimelineStore>()(
-  persist(
-    (set, get) => ({
-      ...INITIAL_STATE,
+export const useTimelineStore = create<TimelineStore>()((set, get) => ({
+  ...INITIAL_STATE,
 
-      initializeTimeline: (clip, videoPath, videoDimensions) => {
-        const duration = clip.end - clip.start
-        set({
-          clip,
-          videoPath,
-          videoDimensions,
-          duration,
-          tracks: [
-            createAvatarTrack(duration, videoDimensions),
-            createGameplayTrack(duration, videoDimensions),
-            createSubtitleTrack(duration),
-          ],
-          undoStack: [],
-          redoStack: [],
-          canUndo: false,
-          canRedo: false,
-        })
-      },
+  initializeTimeline: (clip, videoPath, videoDimensions) => {
+    const duration = clip.end - clip.start
+    set({
+      clip,
+      videoPath,
+      videoDimensions,
+      duration,
+      tracks: [
+        createAvatarTrack(duration, videoDimensions),
+        createGameplayTrack(duration, videoDimensions),
+        createSubtitleTrack(duration),
+      ],
+      undoStack: [],
+      redoStack: [],
+      canUndo: false,
+      canRedo: false,
+    })
+  },
 
-      setVideoPath: (videoPath) => {
-        set({ videoPath })
-      },
+  setVideoPath: (videoPath) => {
+    set({ videoPath })
+  },
 
-      addTrack: (track) => {
-        set(state => ({
-          tracks: [...state.tracks, track],
-        }))
-      },
+  addTrack: (track) => {
+    set(state => ({
+      tracks: [...state.tracks, track],
+    }))
+  },
 
-      removeTrack: (trackId) => {
-        set(state => ({
-          tracks: state.tracks.filter(t => t.id !== trackId),
-        }))
-      },
+  removeTrack: (trackId) => {
+    set(state => ({
+      tracks: state.tracks.filter(t => t.id !== trackId),
+    }))
+  },
 
-      updateTrack: (trackId, patch) => {
-        set(state => ({
-          tracks: state.tracks.map(t =>
-            t.id === trackId ? { ...t, ...patch } : t
-          ),
-        }))
-      },
+  updateTrack: (trackId, patch) => {
+    set(state => ({
+      tracks: state.tracks.map(t =>
+        t.id === trackId ? { ...t, ...patch } : t
+      ),
+    }))
+  },
 
-      updateSegment: (trackId, segmentId, patch) => {
-        set(state => ({
-          tracks: state.tracks.map(t =>
-            t.id === trackId
-              ? {
-                  ...t,
-                  segments: t.segments.map(s =>
-                    s.id === segmentId ? { ...s, ...patch } : s
-                  ),
-                }
-              : t
-          ),
-        }))
-      },
-
-      deleteSegment: (trackId, segmentId) => {
-        set(state => ({
-          tracks: state.tracks.map(t =>
-            t.id === trackId
-              ? { ...t, segments: t.segments.filter(s => s.id !== segmentId) }
-              : t
-          ),
-        }))
-      },
-
-      addSegment: (trackId, segment) => {
-        set(state => ({
-          tracks: state.tracks.map(t =>
-            t.id === trackId ? { ...t, segments: [...t.segments, segment] } : t
-          ),
-        }))
-      },
-
-      updateCropBox: (trackType, cropBox) => {
-        set(state => ({
-          tracks: state.tracks.map(t => {
-            if (t.type === trackType && t.segments[0]) {
-              return {
-                ...t,
-                segments: [{ ...t.segments[0], cropBox }],
-              }
+  updateSegment: (trackId, segmentId, patch) => {
+    set(state => ({
+      tracks: state.tracks.map(t =>
+        t.id === trackId
+          ? {
+              ...t,
+              segments: t.segments.map(s =>
+                s.id === segmentId ? { ...s, ...patch } : s
+              ),
             }
-            return t
-          }),
-        }))
-      },
+          : t
+      ),
+    }))
+  },
 
-      addMarker: (marker) => {
-        set(state => ({
-          markers: [...state.markers, marker],
-        }))
-      },
+  deleteSegment: (trackId, segmentId) => {
+    set(state => ({
+      tracks: state.tracks.map(t =>
+        t.id === trackId
+          ? { ...t, segments: t.segments.filter(s => s.id !== segmentId) }
+          : t
+      ),
+    }))
+  },
 
-      deleteMarker: (markerId) => {
-        set(state => ({
-          markers: state.markers.filter(m => m.id !== markerId),
-        }))
-      },
+  addSegment: (trackId, segment) => {
+    set(state => ({
+      tracks: state.tracks.map(t =>
+        t.id === trackId ? { ...t, segments: [...t.segments, segment] } : t
+      ),
+    }))
+  },
 
-      updateMarker: (markerId, patch) => {
-        set(state => ({
-          markers: state.markers.map(m =>
-            m.id === markerId ? { ...m, ...patch } : m
-          ),
-        }))
-      },
-
-      pushUndo: () => {
-        const state = get()
-        const snapshot: Partial<TimelineState & { markers: Marker[] }> = {
-          clip: state.clip,
-          tracks: JSON.parse(JSON.stringify(state.tracks)),
-          duration: state.duration,
-          markers: JSON.parse(JSON.stringify(state.markers)),
+  updateCropBox: (trackType, cropBox) => {
+    set(state => ({
+      tracks: state.tracks.map(t => {
+        if (t.type === trackType && t.segments[0]) {
+          return {
+            ...t,
+            segments: [{ ...t.segments[0], cropBox }],
+          }
         }
-        set(state => ({
-          undoStack: [...state.undoStack, snapshot],
-          redoStack: [],
-          canUndo: true,
-          canRedo: false,
-        }))
-      },
-
-      undo: () => {
-        const state = get()
-        if (state.undoStack.length === 0) return
-
-        const prev = state.undoStack[state.undoStack.length - 1]
-        const currentSnapshot: Partial<TimelineState & { markers: Marker[] }> = {
-          clip: state.clip,
-          tracks: JSON.parse(JSON.stringify(state.tracks)),
-          duration: state.duration,
-          markers: JSON.parse(JSON.stringify(state.markers)),
-        }
-
-        set({
-          ...prev,
-          undoStack: state.undoStack.slice(0, -1),
-          redoStack: [...state.redoStack, currentSnapshot],
-          canUndo: state.undoStack.length > 1,
-          canRedo: true,
-        })
-      },
-
-      redo: () => {
-        const state = get()
-        if (state.redoStack.length === 0) return
-
-        const next = state.redoStack[state.redoStack.length - 1]
-        const currentSnapshot: Partial<TimelineState & { markers: Marker[] }> = {
-          clip: state.clip,
-          tracks: JSON.parse(JSON.stringify(state.tracks)),
-          duration: state.duration,
-          markers: JSON.parse(JSON.stringify(state.markers)),
-        }
-
-        set({
-          ...next,
-          undoStack: [...state.undoStack, currentSnapshot],
-          redoStack: state.redoStack.slice(0, -1),
-          canUndo: true,
-          canRedo: state.redoStack.length > 1,
-        })
-      },
-
-      resetTimeline: () => {
-        set(INITIAL_STATE)
-      },
-
-      get canUndo() {
-        return this.undoStack.length > 0
-      },
-
-      get canRedo() {
-        return this.redoStack.length > 0
-      },
-    }),
-    {
-      name: 'momiji-timeline-storage',
-      storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({
-        clip: state.clip,
-        tracks: state.tracks,
-        duration: state.duration,
-        videoPath: state.videoPath,
-        videoDimensions: state.videoDimensions,
-        markers: state.markers,
+        return t
       }),
+    }))
+  },
+
+  addMarker: (marker) => {
+    set(state => ({
+      markers: [...state.markers, marker],
+    }))
+  },
+
+  deleteMarker: (markerId) => {
+    set(state => ({
+      markers: state.markers.filter(m => m.id !== markerId),
+    }))
+  },
+
+  updateMarker: (markerId, patch) => {
+    set(state => ({
+      markers: state.markers.map(m =>
+        m.id === markerId ? { ...m, ...patch } : m
+      ),
+    }))
+  },
+
+  pushUndo: () => {
+    const state = get()
+    const snapshot: Partial<TimelineState & { markers: Marker[] }> = {
+      clip: state.clip,
+      tracks: JSON.parse(JSON.stringify(state.tracks)),
+      duration: state.duration,
+      markers: JSON.parse(JSON.stringify(state.markers)),
     }
-  )
-)
+    set(state => ({
+      undoStack: [...state.undoStack, snapshot],
+      redoStack: [],
+      canUndo: true,
+      canRedo: false,
+    }))
+  },
+
+  undo: () => {
+    const state = get()
+    if (state.undoStack.length === 0) return
+
+    const prev = state.undoStack[state.undoStack.length - 1]
+    const currentSnapshot: Partial<TimelineState & { markers: Marker[] }> = {
+      clip: state.clip,
+      tracks: JSON.parse(JSON.stringify(state.tracks)),
+      duration: state.duration,
+      markers: JSON.parse(JSON.stringify(state.markers)),
+    }
+
+    set({
+      ...prev,
+      undoStack: state.undoStack.slice(0, -1),
+      redoStack: [...state.redoStack, currentSnapshot],
+      canUndo: state.undoStack.length > 1,
+      canRedo: true,
+    })
+  },
+
+  redo: () => {
+    const state = get()
+    if (state.redoStack.length === 0) return
+
+    const next = state.redoStack[state.redoStack.length - 1]
+    const currentSnapshot: Partial<TimelineState & { markers: Marker[] }> = {
+      clip: state.clip,
+      tracks: JSON.parse(JSON.stringify(state.tracks)),
+      duration: state.duration,
+      markers: JSON.parse(JSON.stringify(state.markers)),
+    }
+
+    set({
+      ...next,
+      undoStack: [...state.undoStack, currentSnapshot],
+      redoStack: state.redoStack.slice(0, -1),
+      canUndo: true,
+      canRedo: state.redoStack.length > 1,
+    })
+  },
+
+  resetTimeline: () => {
+    set(INITIAL_STATE)
+  },
+
+  get canUndo() {
+    return this.undoStack.length > 0
+  },
+
+  get canRedo() {
+    return this.redoStack.length > 0
+  },
+}))
 
 // Helper to build subtitle segments from transcript
 export function buildSubtitleSegments(

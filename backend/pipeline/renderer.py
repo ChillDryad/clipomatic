@@ -2,13 +2,14 @@
 Renderer — builds ASS subtitle files and runs the FFmpeg stacked-layout filtergraph.
 """
 
-import json
 import os
 import re
 import subprocess
 import tempfile
 import uuid
 from dataclasses import dataclass
+
+from pipeline.media import extract_frame, get_video_dimensions  # noqa: F401 — re-exported for api.py
 
 
 @dataclass
@@ -19,57 +20,59 @@ class CropBox:
     h: int
 
 
-# ---------------------------------------------------------------------------
-# Video utilities
-# ---------------------------------------------------------------------------
+_QUALITY_SETTINGS: dict[str, dict] = {
+    "standard": {
+        "preset": "medium",
+        "crf": "18",
+        "tune": "film",
+        "level": "4.0",
+        "audio_bitrate": "192k",
+    },
+    "production": {
+        "preset": "veryslow",
+        "crf": "12",
+        "tune": "grain",
+        "level": "4.2",
+        "audio_bitrate": "320k",
+    },
+    "fast": {
+        "preset": "fast",
+        "crf": "23",
+        "tune": "fastdecode",
+        "level": "4.0",
+        "audio_bitrate": "128k",
+    },
+    "nvenc": {
+        "encoder": "h264_nvenc",
+        "preset": "p4",
+        "tune": "hq",
+        "level": "auto",
+        "audio_bitrate": "192k",
+    },
+}
 
-def get_video_dimensions(video_path: str) -> tuple[int, int]:
-    """Return (width, height) of the video using ffprobe."""
-    cmd = [
-        "ffprobe", "-v", "quiet",
-        "-hide_banner",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=width,height",
-        "-of", "json",
-        video_path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffprobe failed (code {result.returncode}):\n{result.stderr.strip()}")
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"ffprobe returned invalid JSON: {result.stdout[:200]!r} (exc: {exc})")
-    if not isinstance(data, dict) or "streams" not in data:
-        raise RuntimeError(f"ffprobe returned unexpected structure: {result.stdout[:200]!r}")
-    streams = data["streams"]
-    if not streams:
-        raise RuntimeError(f"ffprobe: no video streams found for {video_path!r}")
-    stream = streams[0]
-    if "width" not in stream or "height" not in stream:
-        raise RuntimeError(f"ffprobe: stream missing width/height: {stream}")
-    return int(stream["width"]), int(stream["height"])
+
+def _escape_ass_path(path: str) -> str:
+    path = path.replace("\\", "/").replace(":", "\\:")
+    return path.replace("'", "'\"'\"'")
 
 
-def extract_frame(video_path: str, timestamp: float, output_dir: str) -> str:
-    """
-    Extract a single frame from the video at the given timestamp.
-    Returns the path to the saved JPEG.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, f"frame_{timestamp:.2f}.jpg")
-    cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(timestamp),
-        "-i", video_path,
-        "-vframes", "1",
-        "-q:v", "2",
-        out_path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"Frame extraction failed:\n{result.stderr.strip()}")
-    return out_path
+def _build_crop_filter(
+    input_label: str,
+    output_label: str,
+    crop: CropBox,
+    start: float,
+    end: float,
+    target_w: int,
+    target_h: int,
+) -> str:
+    return (
+        f"{input_label}"
+        f"trim=start={start}:end={end},setpts=PTS-STARTPTS,"
+        f"crop={crop.w}:{crop.h}:{crop.x}:{crop.y},"
+        f"scale={target_w}:{target_h}:flags=bicubic,"
+        f"setsar=1{output_label}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -146,70 +149,6 @@ def _ass_style_header(
                              outline_width, shadow_with_alpha, output_width, output_height)
 
 
-def _build_ass(
-    segments: list[dict],
-    clip_start: float,
-    clip_end: float,
-    font_name: str = "Arial",
-    font_color: str = "&H00FFFFFF",
-    highlight_color: str = "&H0000FFFF",
-    outline_color: str = "&H00000000",
-    outline_width: float = 2.0,
-    shadow_depth: float = 1.0,
-    shadow_color: str = "&H00000000",
-    shadow_opacity: float = 0.5,
-    font_size: int = 22,
-    output_height: int = 1920,
-    output_width: int = 1080,
-) -> str:
-    """
-    Generate an ASS subtitle file with per-word karaoke highlighting.
-    Returns the file content as a string.
-    Timestamps are shifted so t=0 == clip_start.
-    """
-    header = _ass_style_header(font_name, font_size, font_color, highlight_color,
-                               outline_color, outline_width, shadow_color, shadow_opacity,
-                               output_width, output_height)
-    lines = [header]
-
-    for seg in segments:
-        seg_start = seg["start"]
-        seg_end = seg["end"]
-        if seg_end <= clip_start or seg_start >= clip_end:
-            continue
-
-        t_start = max(seg_start - clip_start, 0.0)
-        t_end = min(seg_end - clip_start, clip_end - clip_start)
-        words = seg.get("words", [])
-
-        if not words:
-            text = seg["text"].strip()
-            lines.append(
-                f"Dialogue: 0,{_seconds_to_ass_time(t_start)},"
-                f"{_seconds_to_ass_time(t_end)},Default,,0,0,0,,{text}\n"
-            )
-            continue
-
-        karaoke_parts = []
-        for w in words:
-            w_start = w["start"]
-            w_end = w["end"]
-            if w_end <= clip_start or w_start >= clip_end:
-                continue
-            duration_cs = max(1, round((w_end - w_start) * 100))
-            word_text = w["word"].strip()
-            karaoke_parts.append(f"{{\\kf{duration_cs}}}{word_text} ")
-
-        if karaoke_parts:
-            karaoke_text = "".join(karaoke_parts).rstrip()
-            lines.append(
-                f"Dialogue: 0,{_seconds_to_ass_time(t_start)},"
-                f"{_seconds_to_ass_time(t_end)},Default,,0,0,0,,{karaoke_text}\n"
-            )
-
-    return "".join(lines)
-
-
 def _build_ass_word_by_word(
     segments: list[dict],
     clip_start: float,
@@ -219,7 +158,6 @@ def _build_ass_word_by_word(
     highlight_color: str = "&H0000FFFF",
     outline_color: str = "&H00000000",
     outline_width: float = 2.0,
-    shadow_depth: float = 1.0,
     shadow_color: str = "&H00000000",
     shadow_opacity: float = 0.5,
     font_size: int = 22,
@@ -437,7 +375,6 @@ def render_clip(
         highlight_color=highlight_color,
         outline_color=outline_color,
         outline_width=outline_width,
-        shadow_depth=shadow_depth,
         shadow_color=shadow_color,
         shadow_opacity=shadow_opacity,
         font_size=font_size,
@@ -455,32 +392,14 @@ def render_clip(
 
         # Escape path for FFmpeg filter (backslashes and colons on Linux are fine,
         # but spaces need escaping)
-        ass_escaped = ass_path.replace("\\", "/").replace(":", "\\:")
-        ass_escaped = ass_escaped.replace("'", "'\"'\"'")
+        ass_escaped = _escape_ass_path(ass_path)
 
         # ---- Build FFmpeg filtergraph ----
         split = "[0:v]split=2[v1][v2]"
-
-        avatar_crop = (
-            f"[v1]"
-            f"trim=start={start}:end={end},setpts=PTS-STARTPTS,"
-            f"crop={crop_avatar.w}:{crop_avatar.h}:{crop_avatar.x}:{crop_avatar.y},"
-            f"scale={output_width}:{half_h}:flags=bicubic,"
-            f"setsar=1[avatar]"
-        )
-
-        game_crop = (
-            f"[v2]"
-            f"trim=start={start}:end={end},setpts=PTS-STARTPTS,"
-            f"crop={crop_game.w}:{crop_game.h}:{crop_game.x}:{crop_game.y},"
-            f"scale={output_width}:{half_h}:flags=bicubic,"
-            f"setsar=1[game]"
-        )
-
+        avatar_crop = _build_crop_filter("[v1]", "[avatar]", crop_avatar, start, end, output_width, half_h)
+        game_crop = _build_crop_filter("[v2]", "[game]", crop_game, start, end, output_width, half_h)
         stack = "[game][avatar]vstack=inputs=2[stacked]"
-
         subtitle_filter = f"[stacked]subtitles='{ass_escaped.replace(chr(39), chr(39)+chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-
         filtergraph = "; ".join([split, avatar_crop, game_crop, stack, subtitle_filter])
 
         # Audio: trim to clip window and reset timestamps
@@ -491,24 +410,9 @@ def render_clip(
         out_filename = f"{safe_title}_{uuid.uuid4().hex[:6]}.mp4"
         out_path = os.path.join(output_dir, out_filename)
 
-        # Quality preset settings
-        quality_settings = {
-            "standard": {
-                "preset": "medium",
-                "crf": "18",
-                "tune": "film",
-                "level": "4.0",
-                "audio_bitrate": "192k",
-            },
-            "production": {
-                "preset": "veryslow",
-                "crf": "12",
-                "tune": "grain",
-                "level": "4.2",
-                "audio_bitrate": "320k",
-            },
-        }
-        settings = quality_settings.get(quality_preset, quality_settings["standard"])
+        settings = _QUALITY_SETTINGS.get(quality_preset, _QUALITY_SETTINGS["standard"])
+        encoder = settings.get("encoder", "libx264")
+        is_nvenc = encoder == "h264_nvenc"
 
         cmd = [
             "ffmpeg", "-y",
@@ -516,18 +420,35 @@ def render_clip(
             "-filter_complex", filtergraph + "; " + audio_filter,
             "-map", "[out]",
             "-map", "[aout]",
-            "-c:v", "libx264",
-            "-preset", settings["preset"],
-            "-crf", settings["crf"],
-            "-tune", settings["tune"],
-            "-profile:v", "high",
-            "-level", settings["level"],
-            "-pix_fmt", "yuv420p",
+            "-c:v", encoder,
+        ]
+
+        if is_nvenc:
+            # NVENC uses bitrate control instead of CRF
+            cmd.extend(["-preset", settings["preset"]])
+            cmd.extend(["-tune", settings["tune"]])
+            cmd.extend(["-rc", "vbr"])
+            cmd.extend(["-cq", "23"])  # Quality level for NVENC (similar to CRF)
+            cmd.extend(["-profile:v", "high"])
+            # Level must be explicit number for NVENC, skip if "auto"
+            if settings.get("level") != "auto":
+                cmd.extend(["-level", settings["level"]])
+            cmd.extend(["-pix_fmt", "yuv420p"])
+        else:
+            # CPU x264 settings
+            cmd.extend(["-preset", settings["preset"]])
+            cmd.extend(["-crf", settings["crf"]])
+            cmd.extend(["-tune", settings["tune"]])
+            cmd.extend(["-profile:v", "high"])
+            cmd.extend(["-level", settings["level"]])
+            cmd.extend(["-pix_fmt", "yuv420p"])
+
+        cmd.extend([
             "-c:a", "aac",
             "-b:a", settings["audio_bitrate"],
             "-movflags", "+faststart",
             out_path,
-        ]
+        ])
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -631,7 +552,6 @@ def render_timeline(
         highlight_color=highlight_color,
         outline_color=outline_color,
         outline_width=outline_width,
-        shadow_depth=shadow_depth,
         shadow_color=shadow_color,
         shadow_opacity=shadow_opacity,
         font_size=font_size,
@@ -649,8 +569,7 @@ def render_timeline(
         with os.fdopen(ass_fd, "w", encoding="utf-8") as f:
             f.write(ass_content)
 
-        ass_escaped = ass_path.replace("\\", "/").replace(":", "\\:")
-        ass_escaped = ass_escaped.replace("'", "'\"'\"'")
+        ass_escaped = _escape_ass_path(ass_path)
 
         # ---- Build FFmpeg filtergraph ----
         filter_parts = []
@@ -658,62 +577,20 @@ def render_timeline(
         output_map = []
 
         # Base video processing
-        split = "[0:v]split=3[v1][v2][base]"
+        split = "[0:v]split=2[v1][v2]"
         filter_parts.append(split)
 
         # Avatar crop
-        if crop_avatar:
-            avatar_crop = (
-                f"[v1]"
-                f"trim=start={start}:end={end},setpts=PTS-STARTPTS,"
-                f"crop={crop_avatar.w}:{crop_avatar.h}:{crop_avatar.x}:{crop_avatar.y},"
-                f"scale={output_width}:{half_h}:flags=bicubic,"
-                f"setsar=1[avatar]"
-            )
-        else:
-            # Default avatar crop (center crop)
+        if not crop_avatar:
             video_w, video_h = get_video_dimensions(video_path)
-            default_crop = CropBox(
-                x=video_w // 4,
-                y=video_h // 4,
-                w=video_w // 2,
-                h=video_h // 2,
-            )
-            avatar_crop = (
-                f"[v1]"
-                f"trim=start={start}:end={end},setpts=PTS-STARTPTS,"
-                f"crop={default_crop.w}:{default_crop.h}:{default_crop.x}:{default_crop.y},"
-                f"scale={output_width}:{half_h}:flags=bicubic,"
-                f"setsar=1[avatar]"
-            )
-        filter_parts.append(avatar_crop)
+            crop_avatar = CropBox(x=video_w // 4, y=video_h // 4, w=video_w // 2, h=video_h // 2)
+        filter_parts.append(_build_crop_filter("[v1]", "[avatar]", crop_avatar, start, end, output_width, half_h))
 
         # Gameplay crop
-        if crop_game:
-            game_crop = (
-                f"[v2]"
-                f"trim=start={start}:end={end},setpts=PTS-STARTPTS,"
-                f"crop={crop_game.w}:{crop_game.h}:{crop_game.x}:{crop_game.y},"
-                f"scale={output_width}:{half_h}:flags=bicubic,"
-                f"setsar=1[game]"
-            )
-        else:
-            # Default gameplay crop (full width, top half)
+        if not crop_game:
             video_w, video_h = get_video_dimensions(video_path)
-            default_game = CropBox(
-                x=0,
-                y=0,
-                w=video_w,
-                h=video_h // 2,
-            )
-            game_crop = (
-                f"[v2]"
-                f"trim=start={start}:end={end},setpts=PTS-STARTPTS,"
-                f"crop={default_game.w}:{default_game.h}:{default_game.x}:{default_game.y},"
-                f"scale={output_width}:{half_h}:flags=bicubic,"
-                f"setsar=1[game]"
-            )
-        filter_parts.append(game_crop)
+            crop_game = CropBox(x=0, y=0, w=video_w, h=video_h // 2)
+        filter_parts.append(_build_crop_filter("[v2]", "[game]", crop_game, start, end, output_width, half_h))
 
         # Stack gameplay over avatar
         stack = "[game][avatar]vstack=inputs=2[stacked]"
@@ -789,57 +666,6 @@ def render_timeline(
 
         output_map.append(current_input)
 
-        # Handle text annotations
-        if text_annotations:
-            for i, annotation in enumerate(text_annotations):
-                text = annotation.get("text", "")
-                ann_start = annotation.get("start", 0)
-                ann_end = annotation.get("end", duration)
-                x = annotation.get("x", 0.5)
-                y = annotation.get("y", 0.5)
-                font_size_ann = annotation.get("font_size", 24)
-                font_family = annotation.get("font_family", "Arial")
-                font_color_ann = annotation.get("font_color", "#FFFFFF")
-                bg_color = annotation.get("background_color")
-                align = annotation.get("align", "center")
-
-                # Map alignment to ASS values
-                align_map = {"left": 7, "center": 2, "right": 9}
-                ass_align = align_map.get(align, 2)
-
-                # Escape text for drawtext filter
-                text_escaped = text.replace("'", "'\\''").replace(":", "\\:")
-
-                # Build drawtext filter
-                pos_x = int(x * output_width)
-                pos_y = int(y * output_height)
-
-                drawtext_args = [
-                    f"text='{text_escaped}'",
-                    f"fontsize={font_size_ann}",
-                    f"fontcolor={font_color_ann}",
-                    f"x={pos_x}",
-                    f"y={pos_y}",
-                    f"fontname={font_family.replace(' ', '_')}",
-                ]
-
-                if bg_color:
-                    drawtext_args.append(f"box=1")
-                    drawtext_args.append(f"boxcolor={bg_color}")
-
-                # Add enable for time-based visibility
-                drawtext_args.append(f"enable='between(t,{ann_start},{ann_end})'")
-
-                # For simplicity, we'll add text via ASS instead of drawtext
-                # This keeps all text rendering in one place
-                # Text annotations are appended to the ASS file
-                # (Already handled in subtitle generation for now)
-
-        # Final output
-        if current_input != "[subtitled]":
-            # We have overlays, use the final chained output
-            pass
-
         filtergraph = "; ".join(filter_parts)
 
         # Audio processing
@@ -899,24 +725,9 @@ def render_timeline(
         out_filename = f"{safe_title}_{uuid.uuid4().hex[:6]}.mp4"
         out_path = os.path.join(output_dir, out_filename)
 
-        # Quality preset settings
-        quality_settings = {
-            "standard": {
-                "preset": "medium",
-                "crf": "18",
-                "tune": "film",
-                "level": "4.0",
-                "audio_bitrate": "192k",
-            },
-            "production": {
-                "preset": "veryslow",
-                "crf": "12",
-                "tune": "grain",
-                "level": "4.2",
-                "audio_bitrate": "320k",
-            },
-        }
-        settings = quality_settings.get(quality_preset, quality_settings["standard"])
+        settings = _QUALITY_SETTINGS.get(quality_preset, _QUALITY_SETTINGS["standard"])
+        encoder = settings.get("encoder", "libx264")
+        is_nvenc = encoder == "h264_nvenc"
 
         cmd = [
             "ffmpeg", "-y",
@@ -924,18 +735,33 @@ def render_timeline(
             "-filter_complex", full_filtergraph,
             "-map", "[out]" if "[out]" in full_filtergraph else f"{current_input}",
             "-map", "[final_audio]",
-            "-c:v", "libx264",
-            "-preset", settings["preset"],
-            "-crf", settings["crf"],
-            "-tune", settings["tune"],
-            "-profile:v", "high",
-            "-level", settings["level"],
-            "-pix_fmt", "yuv420p",
+            "-c:v", encoder,
+        ]
+
+        if is_nvenc:
+            cmd.extend(["-preset", settings["preset"]])
+            cmd.extend(["-tune", settings["tune"]])
+            cmd.extend(["-rc", "vbr"])
+            cmd.extend(["-cq", "23"])
+            cmd.extend(["-profile:v", "high"])
+            # Level must be explicit number for NVENC, skip if "auto"
+            if settings.get("level") != "auto":
+                cmd.extend(["-level", settings["level"]])
+            cmd.extend(["-pix_fmt", "yuv420p"])
+        else:
+            cmd.extend(["-preset", settings["preset"]])
+            cmd.extend(["-crf", settings["crf"]])
+            cmd.extend(["-tune", settings["tune"]])
+            cmd.extend(["-profile:v", "high"])
+            cmd.extend(["-level", settings["level"]])
+            cmd.extend(["-pix_fmt", "yuv420p"])
+
+        cmd.extend([
             "-c:a", "aac",
             "-b:a", settings["audio_bitrate"],
             "-movflags", "+faststart",
             out_path,
-        ]
+        ])
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
