@@ -66,6 +66,7 @@ async def ingest_upload(
 ):
     """
     Save an uploaded video file to the workspace, streaming to disk in chunks.
+    Creates a VideoProject on success with status='loaded'.
     Returns SSE stream with progress updates and final result.
 
     Security validations:
@@ -163,13 +164,30 @@ async def ingest_upload(
             "displayName": display_name,
         }
 
-    return _sse_response(_sse_stream(_save_file_sync))
+    async def _on_upload_complete(result: Any, error: str | None) -> None:
+        """Called when file upload completes - creates VideoProject."""
+        if error or not result:
+            return
+        # Create VideoProject with status='loaded'
+        async with get_session_cm() as session:
+            project = VideoProject(
+                owner_id=user.id,
+                source_path=result["videoPath"],
+                original_filename=result["displayName"],
+                status="loaded",
+            )
+            session.add(project)
+            await session.commit()
+            result["project_id"] = project.id
+
+    return _sse_response(_sse_stream(_save_file_sync, on_complete=_on_upload_complete))
 
 
 @router.post("/url")
 async def ingest_url(req: UrlRequest, user: User = Depends(get_current_user)):
     """
     Download a video from any yt-dlp-supported URL with SSE progress.
+    Creates a VideoProject on success with status='loaded'.
     Auto-names the video using metadata from the source.
     Checks for duplicates before downloading.
     """
@@ -218,13 +236,31 @@ async def ingest_url(req: UrlRequest, user: User = Depends(get_current_user)):
             "duration": video_duration,
         }
 
-    return _sse_response(_sse_stream(_download_with_title))
+    async def _on_download_complete(result: Any, error: str | None) -> None:
+        """Called when download completes - creates VideoProject."""
+        if error or not result:
+            return
+        # Create VideoProject with status='loaded'
+        async with get_session_cm() as session:
+            project = VideoProject(
+                owner_id=user.id,
+                source_path=req.url,
+                original_filename=video_title or os.path.basename(result["videoPath"]),
+                duration=result.get("duration"),
+                status="loaded",
+            )
+            session.add(project)
+            await session.commit()
+            result["project_id"] = project.id
+
+    return _sse_response(_sse_stream(_download_with_title, on_complete=_on_download_complete))
 
 
 @router.post("/twitch/stream")
 async def ingest_twitch_stream(req: UrlRequest, user: User = Depends(get_current_user)):
     """
     Stream only the audio from a Twitch VOD with SSE progress.
+    Creates a VideoProject on success with status='loaded'.
     Auto-names using the VOD title. Checks for duplicates before streaming.
     """
     import yt_dlp
@@ -276,7 +312,24 @@ async def ingest_twitch_stream(req: UrlRequest, user: User = Depends(get_current
             "duration": video_duration,
         }
 
-    return _sse_response(_sse_stream(_stream_with_title))
+    async def _on_stream_complete(result: Any, error: str | None) -> None:
+        """Called when streaming completes - creates VideoProject."""
+        if error or not result:
+            return
+        # Create VideoProject with status='loaded'
+        async with get_session_cm() as session:
+            project = VideoProject(
+                owner_id=user.id,
+                source_path=req.url,
+                original_filename=video_title or f"Twitch VOD {vod_id}",
+                duration=result.get("duration"),
+                status="loaded",
+            )
+            session.add(project)
+            await session.commit()
+            result["project_id"] = project.id
+
+    return _sse_response(_sse_stream(_stream_with_title, on_complete=_on_stream_complete))
 
 
 @router.get("/twitch/check")

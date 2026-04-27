@@ -24,6 +24,8 @@ export function StepIngest() {
   const [isCancelling, setIsCancelling] = useState(false)
   const [hasExistingProject, setHasExistingProject] = useState(false)
 
+  const { setTranscript, setClips } = usePipeline()
+
   // Check for existing project state on mount
   useEffect(() => {
     if (!projectId) return
@@ -31,18 +33,27 @@ export function StepIngest() {
       .then((state) => {
         if (state.transcript || state.clips) {
           setHasExistingProject(true)
-          if (state.transcript) {
-            // Auto-load transcript if available
-            // This will be picked up by StepTranscribe
+          // Set source from project data to enable pipeline step rendering
+          const isTwitch = state.project.source_path.startsWith('http://') || state.project.source_path.startsWith('https://')
+          const isAudioOnly = state.project.source_path.includes('/audio/')
+          if (isTwitch && isAudioOnly) {
+            // Twitch stream (audio-only)
+            setSource({ videoPath: null, audioPath: state.project.source_path, twitchUrl: state.project.source_path, videoUrl: null }, state.transcript)
+          } else if (isTwitch) {
+            // URL download (YouTube, etc.)
+            setSource({ videoPath: state.project.source_path, audioPath: null, twitchUrl: null, videoUrl: state.project.source_path }, state.transcript)
+          } else {
+            // Local file
+            setSource({ videoPath: state.project.source_path, audioPath: null, twitchUrl: null, videoUrl: null }, state.transcript)
           }
           if (state.clips) {
             // Auto-load clips if available
-            // This will be picked up by StepHighlights
+            setClips(state.clips)
           }
         }
       })
       .catch(() => {})
-  }, [projectId])
+  }, [projectId, setSource, setTranscript, setClips])
 
   // New state for video naming
   const [videoName, setVideoName] = useState('')

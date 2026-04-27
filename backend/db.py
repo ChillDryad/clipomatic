@@ -424,3 +424,33 @@ class GeneratedClip(Base):
     updated_at: Mapped[float] = mapped_column(Float, default=lambda: time.time(), onupdate=lambda: time.time())
 
     project: Mapped[VideoProject] = relationship(back_populates="clips")
+
+
+class Transcript(Base):
+    """
+    Transcription data for a video project.
+    Stores the full transcript with segments and word-level timestamps.
+    """
+    __tablename__ = "transcripts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: uuid.uuid4().hex)
+    project_id: Mapped[str] = mapped_column(String, ForeignKey("video_projects.id"), nullable=False, index=True)
+    source_path: Mapped[str] = mapped_column(String, nullable=False, unique=True)  # Original file path or URL
+    language: Mapped[str | None] = mapped_column(String, nullable=True)
+    language_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    duration: Mapped[float | None] = mapped_column(Float, nullable=True)
+    segments: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array of segments with words
+    created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
+    updated_at: Mapped[float] = mapped_column(Float, default=lambda: time.time(), onupdate=lambda: time.time())
+
+    project: Mapped[VideoProject] = relationship(back_populates="transcript")
+
+
+# Add back-populates to VideoProject for transcript relationship
+VideoProject.transcript = relationship(
+    "Transcript",
+    back_populates="project",
+    cascade="all, delete-orphan",
+    lazy="selectin",
+    uselist=False,
+)

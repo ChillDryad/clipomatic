@@ -12,7 +12,7 @@ import json
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from db import User, VideoProject, get_session_cm
+from db import User, VideoProject, Transcript, get_session_cm
 from auth import get_current_user
 from pipeline import transcription
 from utils.sse import _sse_response, _sse_stream
@@ -64,9 +64,10 @@ async def transcribe(req: TranscribeRequest):
     elif source_path:
         await _update_project_status(source_path, "processing")
 
-    # Completion callback to update project status when done
+    # Completion callback to update project status and write transcript to DB when done
     async def on_transcribe_complete(result: Any, error: str | None) -> None:
-        new_status = "complete" if error is None else "failed"
+        # Status 'transcribed' indicates transcript is available
+        new_status = "transcribed" if error is None else "failed"
         if project_id:
             async with get_session_cm() as session:
                 result_obj = await session.execute(
@@ -75,6 +76,36 @@ async def transcribe(req: TranscribeRequest):
                 project = result_obj.scalar_one_or_none()
                 if project:
                     project.status = new_status
+                    # Write transcript to database if available
+                    if result and not error:
+                        # Read transcript from cache file
+                        stem = os.path.splitext(os.path.basename(project.source_path))[0]
+                        transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
+                        if os.path.exists(transcript_path):
+                            with open(transcript_path, "r", encoding="utf-8") as f:
+                                transcript_data = json.load(f)
+                            # Check if transcript already exists
+                            existing = await session.execute(
+                                select(Transcript).where(Transcript.project_id == project_id)
+                            )
+                            transcript_record = existing.scalar_one_or_none()
+                            if transcript_record:
+                                # Update existing
+                                transcript_record.language = transcript_data.get("language")
+                                transcript_record.language_probability = transcript_data.get("language_probability")
+                                transcript_record.duration = transcript_data.get("duration")
+                                transcript_record.segments = json.dumps(transcript_data.get("segments", []))
+                            else:
+                                # Create new
+                                transcript_record = Transcript(
+                                    project_id=project_id,
+                                    source_path=project.source_path,
+                                    language=transcript_data.get("language"),
+                                    language_probability=transcript_data.get("language_probability"),
+                                    duration=transcript_data.get("duration"),
+                                    segments=json.dumps(transcript_data.get("segments", [])),
+                                )
+                                session.add(transcript_record)
                     await session.commit()
         elif source_path:
             await _update_project_status(source_path, new_status)

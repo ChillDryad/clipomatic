@@ -20,7 +20,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import select, func, or_
 
-from db import User, VideoProject, GeneratedClip, TeamMember, get_session_cm
+from db import User, VideoProject, GeneratedClip, TeamMember, Transcript, get_session_cm
 from auth import get_current_user
 from utils.helpers import _clips_cache_path, _parse_clip_key, _regenerate_clip_metadata, _user_dict
 from pydantic import BaseModel
@@ -202,8 +202,8 @@ async def get_project(project_id: str, user: User = Depends(get_current_user)):
                 "end_time": c.end_time,
                 "reason": c.reason,
                 "virality_score": c.virality_score,
-                "brand_alignment": c.brand_alignment,
-                "hashtags": c.hashtags,
+                "brand_alignment": json.loads(c.brand_alignment) if c.brand_alignment else [],
+                "hashtags": json.loads(c.hashtags) if c.hashtags else [],
                 "render_path": c.render_path,
             }
             for c in clips
@@ -262,7 +262,10 @@ async def add_clips_to_project(project_id: str, req: AddClipsRequest, user: User
 
 @router.get("/{project_id}/clips")
 async def get_project_clips(project_id: str, user: User = Depends(get_current_user)):
-    """Get clips for a project from the cache file."""
+    """
+    Get clips for a project.
+    Prefers database clips, but falls back to cache file and migrates to DB if found.
+    """
     async with get_session_cm() as session:
         project = await session.get(VideoProject, project_id)
         if not project:
@@ -271,15 +274,82 @@ async def get_project_clips(project_id: str, user: User = Depends(get_current_us
         if project.owner_id != user.id:
             raise HTTPException(status_code=403, detail="Access denied")
 
-    # Load clips from cache file
-    cache_path = _clips_cache_path(project.source_path)
-    if not os.path.exists(cache_path):
-        return {"clips": []}
+        # First, try to load clips from database
+        clips_result = await session.execute(
+            select(GeneratedClip).where(GeneratedClip.project_id == project_id).order_by(GeneratedClip.index)
+        )
+        db_clips = clips_result.scalars().all()
 
-    with open(cache_path, "r", encoding="utf-8") as f:
-        clips = json.load(f)
+        if db_clips:
+            return {
+                "clips": [
+                    {
+                        "id": c.id,
+                        "index": c.index,
+                        "title": c.title,
+                        "start": c.start_time,
+                        "end": c.end_time,
+                        "reason": c.reason,
+                        "virality_score": c.virality_score,
+                        "brand_alignment": json.loads(c.brand_alignment) if c.brand_alignment else [],
+                        "hashtags": json.loads(c.hashtags) if c.hashtags else [],
+                        "render_path": c.render_path,
+                    }
+                    for c in db_clips
+                ],
+                "source": "database",
+            }
 
-    return {"clips": clips}
+        # No DB clips - check cache file for legacy data
+        cache_path = _clips_cache_path(project.source_path)
+        if not os.path.exists(cache_path):
+            return {"clips": [], "source": "none"}
+
+        with open(cache_path, "r", encoding="utf-8") as f:
+            cached_clips = json.load(f)
+
+        if not cached_clips:
+            return {"clips": [], "source": "cache"}
+
+        # Migrate cached clips to database
+        for idx, clip in enumerate(cached_clips):
+            db_clip = GeneratedClip(
+                project_id=project_id,
+                index=idx,
+                title=clip.get("title", ""),
+                start_time=clip.get("start", 0),
+                end_time=clip.get("end", 0),
+                reason=clip.get("reason"),
+                virality_score=clip.get("virality_score"),
+                brand_alignment=json.dumps(clip.get("brand_alignment", [])) if clip.get("brand_alignment") else None,
+                hashtags=json.dumps(clip.get("hashtags", [])) if clip.get("hashtags") else None,
+            )
+            session.add(db_clip)
+
+        # Update project status to 'completed' if clips were migrated
+        if project.status not in ("completed", "processing"):
+            project.status = "completed"
+
+        await session.commit()
+
+        # Return migrated clips in database format
+        return {
+            "clips": [
+                {
+                    "id": None,  # Will be populated after commit, but we return the data
+                    "index": idx,
+                    "title": clip.get("title", ""),
+                    "start": clip.get("start", 0),
+                    "end": clip.get("end", 0),
+                    "reason": clip.get("reason"),
+                    "virality_score": clip.get("virality_score"),
+                    "brand_alignment": clip.get("brand_alignment", []),
+                    "hashtags": clip.get("hashtags", []),
+                }
+                for idx, clip in enumerate(cached_clips)
+            ],
+            "source": "cache_migrated",
+        }
 
 
 @router.post("/{project_id}/clips/{clip_index}/regenerate-metadata")
@@ -324,7 +394,7 @@ async def regenerate_clip_metadata(
 async def get_project_pipeline_state(project_id: str, user: User = Depends(get_current_user)):
     """
     Return the complete pipeline state for a project.
-    Includes cached transcript and clips if available.
+    Prefers database records, falls back to cache files.
     """
     async with get_session_cm() as session:
         result = await session.execute(
@@ -335,30 +405,72 @@ async def get_project_pipeline_state(project_id: str, user: User = Depends(get_c
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
 
-    # Check transcript cache
+    # Load transcript from database (preferred) or cache file fallback
     transcript = None
     transcript_cached = False
-    stem = os.path.splitext(os.path.basename(project.source_path))[0]
-    transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
-    if os.path.exists(transcript_path):
-        try:
-            with open(transcript_path, "r", encoding="utf-8") as f:
-                transcript = json.load(f)
-            transcript_cached = True
-        except (json.JSONDecodeError, IOError):
-            pass
 
-    # Check clips cache
+    # Try database first
+    transcript_result = await session.execute(
+        select(Transcript).where(Transcript.project_id == project_id)
+    )
+    db_transcript = transcript_result.scalar_one_or_none()
+
+    if db_transcript:
+        transcript = {
+            "language": db_transcript.language,
+            "language_probability": db_transcript.language_probability,
+            "duration": db_transcript.duration,
+            "segments": json.loads(db_transcript.segments),
+        }
+        transcript_cached = True
+    else:
+        # Fallback to cache file
+        stem = os.path.splitext(os.path.basename(project.source_path))[0]
+        transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
+        if os.path.exists(transcript_path):
+            try:
+                with open(transcript_path, "r", encoding="utf-8") as f:
+                    transcript = json.load(f)
+                transcript_cached = True
+            except (json.JSONDecodeError, IOError):
+                pass
+
+    # Load clips from database (preferred) or cache file fallback
     clips = None
     clips_cached = False
-    clips_path = _clips_cache_path(project.source_path)
-    if os.path.exists(clips_path):
-        try:
-            with open(clips_path, "r", encoding="utf-8") as f:
-                clips = json.load(f)
-            clips_cached = True
-        except (json.JSONDecodeError, IOError):
-            pass
+
+    # Try database first
+    clips_result = await session.execute(
+        select(GeneratedClip).where(GeneratedClip.project_id == project_id).order_by(GeneratedClip.index)
+    )
+    db_clips = clips_result.scalars().all()
+
+    if db_clips:
+        clips = [
+            {
+                "id": c.id,
+                "index": c.index,
+                "title": c.title,
+                "start": c.start_time,
+                "end": c.end_time,
+                "reason": c.reason,
+                "virality_score": c.virality_score,
+                "brand_alignment": json.loads(c.brand_alignment) if c.brand_alignment else [],
+                "hashtags": json.loads(c.hashtags) if c.hashtags else [],
+            }
+            for c in db_clips
+        ]
+        clips_cached = True
+    else:
+        # Fallback to cache file
+        clips_path = _clips_cache_path(project.source_path)
+        if os.path.exists(clips_path):
+            try:
+                with open(clips_path, "r", encoding="utf-8") as f:
+                    clips = json.load(f)
+                clips_cached = True
+            except (json.JSONDecodeError, IOError):
+                pass
 
     return {
         "project": {

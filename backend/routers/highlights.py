@@ -9,9 +9,10 @@ Endpoints:
 import os
 import json
 import logging
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from db import User, VideoProject, get_session_cm
+from db import User, VideoProject, GeneratedClip, get_session_cm
 from auth import get_current_user
 from pipeline import highlight_detection
 from utils.sse import _sse_response, _sse_stream
@@ -41,6 +42,7 @@ async def highlights(req: HighlightsRequest):
 
     async def _generate():
         completed = False
+        detected_clips = []
         # Timeout per chunk: 2 minutes (120s) for Gemma4, adjust based on hardware
         timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "120"))
         # Fallback model when primary times out (smaller = faster)
@@ -55,30 +57,47 @@ async def highlights(req: HighlightsRequest):
             fallback_model=fallback_model,
         ):
             yield event_str
-            # When done, persist the clips to disk
+            # When done, persist the clips to disk and database
             try:
                 raw = event_str.removeprefix("data: ").strip()
                 event = json.loads(raw) if raw.startswith("{") else {}
                 if event.get("done") and req.source_path and event.get("result") is not None:
+                    detected_clips = event["result"]
+                    # Write to cache file
                     cache_path = _clips_cache_path(req.source_path)
                     with open(cache_path, "w", encoding="utf-8") as f:
-                        json.dump(event["result"], f, ensure_ascii=False, indent=2)
+                        json.dump(detected_clips, f, ensure_ascii=False, indent=2)
                     completed = True
             except Exception as exc:
                 logger.warning("Failed to write clips cache: %s", exc)
 
-        # Update project status on completion
-        if req.project_id:
+        # Update project status and write clips to database on completion
+        if req.project_id and completed:
             async with get_session_cm() as session:
+                # Update project status to 'completed'
                 result = await session.execute(
                     select(VideoProject).where(VideoProject.id == req.project_id)
                 )
                 project = result.scalar_one_or_none()
                 if project:
-                    project.status = "complete" if completed else "failed"
+                    project.status = "completed"
+                    # Write clips to GeneratedClip table
+                    for idx, clip in enumerate(detected_clips):
+                        db_clip = GeneratedClip(
+                            project_id=req.project_id,
+                            index=idx,
+                            title=clip.get("title", ""),
+                            start_time=clip.get("start", 0),
+                            end_time=clip.get("end", 0),
+                            reason=clip.get("reason"),
+                            virality_score=clip.get("virality_score"),
+                            brand_alignment=json.dumps(clip.get("brand_alignment", [])) if clip.get("brand_alignment") else None,
+                            hashtags=json.dumps(clip.get("hashtags", [])) if clip.get("hashtags") else None,
+                        )
+                        session.add(db_clip)
                     await session.commit()
         elif req.source_path:
-            await _update_project_status(req.source_path, "complete" if completed else "failed")
+            await _update_project_status(req.source_path, "completed" if completed else "failed")
 
     return _sse_response(_generate())
 
