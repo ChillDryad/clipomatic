@@ -345,6 +345,21 @@ export async function getCachedTranscript(path: string): Promise<Transcript | nu
   return res.json()
 }
 
+/**
+ * Saves a cached transcript to the database for a project.
+ * Call this when user accepts cached transcript data.
+ */
+export async function saveCachedTranscript(projectId: string, transcript: Transcript): Promise<{ success: boolean }> {
+  const res = await fetch('/api/transcribe/save-cached', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId, transcript }),
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 // ---------------------------------------------------------------------------
 // Highlights
 // ---------------------------------------------------------------------------
@@ -368,6 +383,21 @@ export async function detectHighlights(
 export async function getCachedClips(sourcePath: string): Promise<Clip[] | null> {
   const res = await fetch(`/api/highlights/cached?path=${encodeURIComponent(sourcePath)}`, { credentials: 'include' })
   if (res.status === 404) return null
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+/**
+ * Saves cached clips to the database for a project.
+ * Call this when user accepts cached clips data.
+ */
+export async function saveCachedClips(projectId: string, clips: Clip[]): Promise<{ success: boolean }> {
+  const res = await fetch('/api/highlights/save-cached', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId, clips }),
+    credentials: 'include',
+  })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

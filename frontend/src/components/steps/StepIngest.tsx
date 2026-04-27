@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { uploadFile, downloadUrl, streamTwitchAudio, checkTwitchCache, listTwitchVods, twitchAuthorizeUrl, createProject, parseApiError, getAbortController, cancelOperation, type TwitchVod, getProjectPipelineState } from '../../api'
+import { uploadFile, downloadUrl, streamTwitchAudio, checkTwitchCache, listTwitchVods, twitchAuthorizeUrl, createProject, parseApiError, getAbortController, cancelOperation, type TwitchVod, getProjectPipelineState, saveCachedTranscript } from '../../api'
 import { ProgressBar } from '../ui/ProgressBar'
 import { usePipeline } from '../../context/PipelineContext'
 import { formatDuration } from '../../utils/format'
@@ -214,7 +214,13 @@ export function StepIngest() {
   }
 
   const handleLoadCached = async () => {
-    if (!twitchCache?.cached || !twitchCache.transcript) return
+    if (!twitchCache?.cached || !twitchCache.transcript || !projectId) return
+    try {
+      // Save transcript to database
+      await saveCachedTranscript(projectId, twitchCache.transcript)
+    } catch (err) {
+      console.error('Failed to save cached transcript:', err)
+    }
     const audioPath = twitchCache.audio_path ?? null
     setSource({ videoPath: null, audioPath, twitchUrl: twitchInput.trim(), videoUrl: null }, twitchCache.transcript)
   }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { detectHighlights, getCachedClips, addClipsToProject, parseApiError, checkIngestState } from '../../api'
+import { detectHighlights, getCachedClips, addClipsToProject, saveCachedClips, parseApiError, checkIngestState } from '../../api'
 import { ProgressBar } from '../ui/ProgressBar'
 import { usePipeline } from '../../context/PipelineContext'
 import { ApiErrorBanner } from '../ui/ApiErrorBanner'
@@ -33,10 +33,15 @@ export function StepHighlights() {
   }, [sourcePath, clips])
 
   const handleLoadCached = async () => {
-    if (!sourcePath) return
+    if (!sourcePath || !projectId) return
     try {
       const cached = await getCachedClips(sourcePath)
-      if (cached) { setClips(cached); setCachedCount(null) }
+      if (cached) {
+        // Save to database
+        await saveCachedClips(projectId, cached)
+        setClips(cached)
+        setCachedCount(null)
+      }
     } catch (err) {
       setError(parseApiError(err))
     }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { transcribe, getCachedTranscript, parseApiError, getAbortController, cancelOperation, checkIngestState } from '../../api'
+import { transcribe, getCachedTranscript, saveCachedTranscript, parseApiError, getAbortController, cancelOperation, checkIngestState } from '../../api'
 import { ProgressBar } from '../ui/ProgressBar'
 import { usePipeline } from '../../context/PipelineContext'
 import { formatDuration } from '../../utils/format'
@@ -67,7 +67,12 @@ export function StepTranscribe() {
   const handleLoadCached = async () => {
     try {
       const cached = await getCachedTranscript(sourcePath)
-      if (cached) {
+      if (cached && projectId) {
+        // Save to database
+        await saveCachedTranscript(projectId, cached)
+        setTranscript(cached)
+        setHasCachedTranscript(false)
+      } else if (cached) {
         setTranscript(cached)
         setHasCachedTranscript(false)
       }

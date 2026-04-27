@@ -19,6 +19,7 @@ from utils.sse import _sse_response, _sse_stream
 from utils.helpers import _update_project_status
 from pydantic import BaseModel
 from sqlalchemy import select
+from typing import Any as AnyDict
 
 router = APIRouter(prefix="/api/transcribe", tags=["Transcription"])
 
@@ -133,6 +134,57 @@ async def transcribe_cached(path: str = Query(...), user: User = Depends(get_cur
         raise HTTPException(status_code=404, detail="No cached transcript found.")
     with open(transcript_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+class SaveTranscriptRequest(BaseModel):
+    project_id: str
+    transcript: dict
+
+
+@router.post("/save-cached")
+async def save_cached_transcript(req: SaveTranscriptRequest, user: User = Depends(get_current_user)):
+    """
+    Save a cached transcript to the database for a project.
+    Use this when user accepts cached data from a file.
+    """
+    async with get_session_cm() as session:
+        # Verify project ownership
+        result = await session.execute(
+            select(VideoProject).where(VideoProject.id == req.project_id, VideoProject.owner_id == user.id)
+        )
+        project = result.scalar_one_or_none()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found or access denied.")
+
+        # Check if transcript already exists
+        existing = await session.execute(
+            select(Transcript).where(Transcript.project_id == req.project_id)
+        )
+        transcript_record = existing.scalar_one_or_none()
+
+        if transcript_record:
+            # Update existing
+            transcript_record.language = req.transcript.get("language")
+            transcript_record.language_probability = req.transcript.get("language_probability")
+            transcript_record.duration = req.transcript.get("duration")
+            transcript_record.segments = json.dumps(req.transcript.get("segments", []))
+        else:
+            # Create new
+            transcript_record = Transcript(
+                project_id=req.project_id,
+                source_path=project.source_path,
+                language=req.transcript.get("language"),
+                language_probability=req.transcript.get("language_probability"),
+                duration=req.transcript.get("duration"),
+                segments=json.dumps(req.transcript.get("segments", [])),
+            )
+            session.add(transcript_record)
+
+        # Update project status to 'transcribed'
+        project.status = "transcribed"
+        await session.commit()
+
+    return {"success": True}
 
 
 @router.post("/segment")
