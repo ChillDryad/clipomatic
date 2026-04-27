@@ -50,10 +50,14 @@ async def _sse_stream(
     Yields:
         SSE-formatted event strings
     """
+    import sys
+    sys.stdout.flush()  # Ensure no buffering at startup
+
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
     def cb(fraction: float, label: str) -> None:
+        logger.debug("SSE progress callback: fraction=%s, label=%s", fraction, label)
         loop.call_soon_threadsafe(
             queue.put_nowait, {"progress": fraction, "label": label}
         )
@@ -61,6 +65,7 @@ async def _sse_stream(
     async def _run() -> None:
         try:
             result = await asyncio.to_thread(fn, *args, progress_callback=cb, **kwargs)
+            logger.debug("SSE stream completed successfully, result: %s", result)
             queue.put_nowait({"done": True, "result": result})
         except Exception as exc:
             logger.exception("SSE stream error in %s: %s", fn.__name__, exc)
@@ -75,10 +80,14 @@ async def _sse_stream(
         except asyncio.TimeoutError:
             yield _sse_event({"heartbeat": True})
             continue
+        logger.debug("SSE yielding event: %s", event)
         yield _sse_event(event)
+        # Force flush after each event for real-time delivery
+        await asyncio.sleep(0)
         if "done" in event or "error" in event:
             result = event.get("result")
             error = event.get("error")
+            logger.debug("SSE stream ending: done=%s, error=%s", result is not None, error)
             break
     await task
     if on_complete:

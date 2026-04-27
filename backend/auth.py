@@ -26,9 +26,10 @@ from db import User, get_session
 # ---------------------------------------------------------------------------
 
 # JWT Configuration - RS256 (asymmetric keys) for enhanced security
-# Access token expiry reduced from 24h to 15 minutes (OWASP recommendation)
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
-REFRESH_TOKEN_EXPIRE_DAYS = 30
+# Access token: 24 hours for extended sessions (single-device VTuber app)
+# Refresh token: 90 days for persistent login
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
+REFRESH_TOKEN_EXPIRE_DAYS = 90
 
 # JWT Claims configuration
 JWT_ISSUER = os.environ.get("JWT_ISSUER", "momiji-clipper")

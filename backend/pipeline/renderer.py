@@ -363,6 +363,39 @@ def render_clip(
     if duration <= 0:
         raise ValueError(f"Invalid clip duration: start={start}, end={end}")
 
+    # Validate input video exists and has sufficient duration
+    if not os.path.exists(video_path):
+        raise RuntimeError(f"Input video file not found: {video_path}")
+
+    # Check video duration using ffprobe to catch empty/corrupted segments
+    import subprocess
+    import json
+    probe_cmd = [
+        "ffprobe", "-v", "quiet",
+        "-show_entries", "format=duration",
+        "-of", "json",
+        video_path,
+    ]
+    result = subprocess.run(probe_cmd, capture_output=True, text=True)
+    if result.returncode == 0 and result.stdout.strip():
+        try:
+            data = json.loads(result.stdout)
+            video_duration = float(data.get("format", {}).get("duration", 0))
+            if video_duration <= 0:
+                raise RuntimeError(
+                    f"Input video has zero duration - segment download failed or returned empty content. "
+                    f"Requested clip: {start:.1f}s to {end:.1f}s ({duration:.1f}s total). "
+                    f"File: {video_path}"
+                )
+            if video_duration < duration:
+                raise RuntimeError(
+                    f"Input video duration ({video_duration:.1f}s) is shorter than requested clip ({duration:.1f}s). "
+                    f"Requested clip: {start:.1f}s to {end:.1f}s. "
+                    f"This may indicate a failed segment download. File: {video_path}"
+                )
+        except (json.JSONDecodeError, KeyError, ValueError):
+            pass  # If we can't parse duration, proceed and let ffmpeg fail with more info
+
     half_h = output_height // 2  # each panel takes half the output height
 
     # ---- Build ASS subtitle file (per-word karaoke, CapCut style) ----
@@ -464,6 +497,13 @@ def render_clip(
             if "Invalid argument" in stderr or "Invalid data" in stderr:
                 raise RuntimeError(
                     f"FFmpeg rendering failed: Invalid video format or corrupted file.\n"
+                    f"FFmpeg error: {stderr[:500]}"
+                )
+            if "matches no streams" in stderr:
+                raise RuntimeError(
+                    f"FFmpeg rendering failed: Clip timestamps don't match the video.\n"
+                    f"This can happen when the clip start/end times are outside the video duration.\n"
+                    f"Requested: {start:.1f}s to {end:.1f}s ({duration:.1f}s)\n"
                     f"FFmpeg error: {stderr[:500]}"
                 )
             raise RuntimeError(

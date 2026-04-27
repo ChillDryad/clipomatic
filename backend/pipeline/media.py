@@ -123,17 +123,48 @@ def get_video_dimensions(video_path: str) -> tuple[int, int]:
 
 
 def extract_frame(video_path: str, timestamp: float, output_dir: str) -> str:
-    """Extract a single frame from the video at the given timestamp. Returns the JPEG path."""
+    """
+    Extract a single frame from the video at the given timestamp.
+    Supports both file paths and URLs (YouTube, Twitch, etc.).
+    Returns the JPEG path.
+    """
     os.makedirs(output_dir, exist_ok=True)
     out_path = os.path.join(output_dir, f"frame_{timestamp:.2f}.jpg")
-    cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(timestamp),
-        "-i", video_path,
-        "-vframes", "1",
-        "-q:v", "2",
-        out_path,
-    ]
+
+    # Check if video_path is a URL (starts with http/https)
+    is_url = video_path.startswith("http://") or video_path.startswith("https://")
+
+    if is_url:
+        # For URLs, use yt-dlp to get the direct stream URL, then ffmpeg to extract frame
+        url_result = subprocess.run(
+            ["yt-dlp", "-f", "best", "--get-url", video_path],
+            capture_output=True, text=True,
+        )
+        if url_result.returncode != 0 or not url_result.stdout.strip():
+            raise RuntimeError(
+                f"yt-dlp could not resolve video URL:\n{url_result.stderr.strip()}"
+            )
+        stream_url = url_result.stdout.strip().splitlines()[-1]
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(timestamp),
+            "-i", stream_url,
+            "-vframes", "1",
+            "-q:v", "2",
+            out_path,
+        ]
+    else:
+        # For file paths, use direct ffmpeg
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(timestamp),
+            "-i", video_path,
+            "-vframes", "1",
+            "-q:v", "2",
+            out_path,
+        ]
+
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Frame extraction failed:\n{result.stderr.strip()}")

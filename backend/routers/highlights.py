@@ -41,12 +41,18 @@ async def highlights(req: HighlightsRequest):
 
     async def _generate():
         completed = False
+        # Timeout per chunk: 2 minutes (120s) for Gemma4, adjust based on hardware
+        timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "120"))
+        # Fallback model when primary times out (smaller = faster)
+        fallback_model = os.environ.get("HIGHLIGHT_FALLBACK_MODEL", "phi3:mini")
         async for event_str in _sse_stream(
             highlight_detection.detect_highlights,
             transcript=req.transcript,
             api_key=api_key,
             base_url=base_url,
             model=req.model,
+            timeout_per_chunk=timeout_per_chunk,
+            fallback_model=fallback_model,
         ):
             yield event_str
             # When done, persist the clips to disk

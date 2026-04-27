@@ -2,10 +2,14 @@
 Ingestion pipeline — handles YouTube/Twitch downloads, audio streaming, and local file uploads.
 """
 
+import logging
 import os
 import re
 import subprocess
+import threading
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[float, str], None]
 
@@ -22,7 +26,10 @@ _YTDLP_ALREADY_RE = re.compile(r"\[download\] (.+) has already been downloaded")
 
 def _fire(callback: ProgressCallback | None, fraction: float, label: str) -> None:
     if callback:
+        logger.debug("_fire called: fraction=%s, label=%s", fraction, label)
         callback(fraction, label)
+    else:
+        logger.debug("_fire called but no callback set: fraction=%s, label=%s", fraction, label)
 
 
 def _apply_browser_cookies(cmd: list[str]) -> list[str]:
@@ -37,6 +44,12 @@ def _resolve_ytdlp_output(stdout_data: str, last_destination: list[str]) -> str:
     if not output_path and last_destination:
         output_path = last_destination[-1]
     return output_path
+
+
+def _read_stream_to_list(stream, lines_list: list[str]) -> None:
+    """Read all lines from a stream into a list. Used for subprocess pipes."""
+    for line in stream:
+        lines_list.append(line.rstrip())
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +172,8 @@ def download_segment(
         "-f", "best[ext=mp4]/best",
         "--merge-output-format", "mp4",
         "--no-playlist",
+        "--concurrent-fragments", "8",  # parallel HLS fragment download
+        "--http-chunk-size", "10M",  # larger HTTP chunks
         "--output", output_template,
         "--print", "after_move:filepath",
         "--newline",
@@ -169,32 +184,45 @@ def download_segment(
 
     _fire(progress_callback, 0.0, "Starting segment download…")
 
-    # yt-dlp stdout is a single filepath line — won't fill the pipe buffer, so
-    # reading stderr first in the main thread is safe and avoids NoSessionContext.
+    # Use threads to read stdout/stderr concurrently — avoids deadlock when
+    # pipe buffers fill up on long downloads or error-heavy output.
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     stderr_lines: list[str] = []
+    stdout_lines: list[str] = []
     last_destination: list[str] = []
 
-    for line in process.stderr:
-        line = line.rstrip()
-        stderr_lines.append(line)
-        m = _YTDLP_PROGRESS_RE.search(line)
-        if m:
-            pct = float(m.group(1)) / 100.0
-            _fire(progress_callback, pct * 0.95, f"Downloading segment… {m.group(1)}%")
-        elif "Merging formats" in line or "[Merger]" in line or "[ffmpeg]" in line:
-            _fire(progress_callback, 0.96, "Merging segment…")
-        dm = _YTDLP_DEST_RE.search(line)
-        if dm:
-            last_destination.append(dm.group(1).strip())
-        else:
-            am = _YTDLP_ALREADY_RE.search(line)
-            if am:
-                last_destination.append(am.group(1).strip())
+    def _read_stderr():
+        for line in process.stderr:
+            line = line.rstrip()
+            stderr_lines.append(line)
+            m = _YTDLP_PROGRESS_RE.search(line)
+            if m:
+                pct = float(m.group(1)) / 100.0
+                _fire(progress_callback, pct * 0.95, f"Downloading segment… {m.group(1)}%")
+            elif "Merging formats" in line or "[Merger]" in line or "[ffmpeg]" in line:
+                _fire(progress_callback, 0.96, "Merging segment…")
+            dm = _YTDLP_DEST_RE.search(line)
+            if dm:
+                last_destination.append(dm.group(1).strip())
+            else:
+                am = _YTDLP_ALREADY_RE.search(line)
+                if am:
+                    last_destination.append(am.group(1).strip())
 
-    stdout_data = process.stdout.read()
+    def _read_stdout():
+        for line in process.stdout:
+            stdout_lines.append(line.rstrip())
+
+    t_stderr = threading.Thread(target=_read_stderr)
+    t_stdout = threading.Thread(target=_read_stdout)
+    t_stderr.start()
+    t_stdout.start()
+    t_stderr.join()
+    t_stdout.join()
     process.wait()
+
+    stdout_data = "\n".join(stdout_lines)
 
     if process.returncode != 0:
         raise RuntimeError(
@@ -211,6 +239,30 @@ def download_segment(
             f"Expected: {output_path!r}\n"
             f"stderr: {chr(10).join(stderr_lines[-10:])}"
         )
+
+    # Validate the downloaded segment has content (non-zero duration)
+    import json as _json
+    probe_result = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "json", output_path],
+        capture_output=True, text=True,
+    )
+    if probe_result.returncode == 0 and probe_result.stdout.strip():
+        try:
+            probe_data = _json.loads(probe_result.stdout)
+            seg_duration = float(probe_data.get("format", {}).get("duration", 0))
+            if seg_duration <= 0:
+                raise RuntimeError(
+                    f"Downloaded segment has zero duration - yt-dlp returned an empty file. "
+                    f"Requested: {start:.1f}s to {end:.1f}s. File: {output_path}"
+                )
+            expected_duration = end - start
+            if seg_duration < expected_duration * 0.5:
+                logger.warning(
+                    f"Downloaded segment duration ({seg_duration:.1f}s) is much shorter than expected ({expected_duration:.1f}s). "
+                    f"This may indicate a partial download or stream unavailability."
+                )
+        except (_json.JSONDecodeError, KeyError, ValueError):
+            pass  # If we can't parse, proceed and let caller handle it
 
     return output_path
 
@@ -238,10 +290,12 @@ def download_video(
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
         "--no-playlist",
-        "--concurrent-fragments", "4",  # parallel HLS fragment download
+        "--concurrent-fragments", "8",  # parallel HLS fragment download (increased from 4)
+        "--http-chunk-size", "10M",  # larger HTTP chunks for faster downloads
         "--output", output_template,
         "--print", "after_move:filepath",
         "--newline",
+        "--force-overwrites",
         url,
     ]
 
@@ -255,41 +309,61 @@ def download_video(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        bufsize=1,  # Line buffered for real-time progress
     )
 
-    # yt-dlp stdout is a single filepath line — read stderr in the main thread
-    # first, then read stdout after the process ends. This avoids NoSessionContext.
-    stderr_lines = []
-    download_phase = -1  # increments to 0 (video) on first Destination line, then 1 (audio)
+    # Use threads to read stdout/stderr concurrently — avoids deadlock when
+    # pipe buffers fill up on long downloads or error-heavy output.
+    stderr_lines: list[str] = []
+    stdout_lines: list[str] = []
+    download_phase = -1
     last_destination: list[str] = []
 
-    for line in process.stderr:
-        line = line.rstrip()
-        stderr_lines.append(line)
-        m = _YTDLP_PROGRESS_RE.search(line)
-        if m:
-            pct = float(m.group(1)) / 100.0
-            if download_phase <= 0:
-                _fire(progress_callback, pct * 0.5, f"Downloading video… {m.group(1)}%")
+    def _read_stderr():
+        nonlocal download_phase
+        for line in process.stderr:
+            line = line.rstrip()
+            stderr_lines.append(line)
+            logger.debug("yt-dlp stderr: %s", line)
+            m = _YTDLP_PROGRESS_RE.search(line)
+            if m:
+                pct = float(m.group(1)) / 100.0
+                if download_phase <= 0:
+                    logger.debug("Video progress: %s%% -> fraction %s", m.group(1), pct * 0.5)
+                    _fire(progress_callback, pct * 0.5, f"Downloading video… {m.group(1)}%")
+                else:
+                    logger.debug("Audio progress: %s%% -> fraction %s", m.group(1), 0.5 + pct * 0.45)
+                    _fire(progress_callback, 0.5 + pct * 0.45, f"Downloading audio… {m.group(1)}%")
+            elif "has already been downloaded" in line or \
+                 "Merging formats" in line or \
+                 "[Merger]" in line or \
+                 "[ffmpeg]" in line:
+                logger.debug("Merging phase detected")
+                _fire(progress_callback, 0.95, "Merging video and audio…")
+            if "[download] Destination:" in line:
+                download_phase += 1
+                logger.debug("Download phase changed to: %d", download_phase)
+                dm = _YTDLP_DEST_RE.search(line)
+                if dm:
+                    last_destination.append(dm.group(1).strip())
             else:
-                _fire(progress_callback, 0.5 + pct * 0.45, f"Downloading audio… {m.group(1)}%")
-        elif "has already been downloaded" in line or \
-             "Merging formats" in line or \
-             "[Merger]" in line or \
-             "[ffmpeg]" in line:
-            _fire(progress_callback, 0.95, "Merging video and audio…")
-        if "[download] Destination:" in line:
-            download_phase += 1
-            dm = _YTDLP_DEST_RE.search(line)
-            if dm:
-                last_destination.append(dm.group(1).strip())
-        else:
-            am = _YTDLP_ALREADY_RE.search(line)
-            if am:
-                last_destination.append(am.group(1).strip())
+                am = _YTDLP_ALREADY_RE.search(line)
+                if am:
+                    last_destination.append(am.group(1).strip())
 
-    stdout_data = process.stdout.read()
+    def _read_stdout():
+        for line in process.stdout:
+            stdout_lines.append(line.rstrip())
+
+    t_stderr = threading.Thread(target=_read_stderr)
+    t_stdout = threading.Thread(target=_read_stdout)
+    t_stderr.start()
+    t_stdout.start()
+    t_stderr.join()
+    t_stdout.join()
     process.wait()
+
+    stdout_data = "\n".join(stdout_lines)
 
     if process.returncode != 0:
         raise RuntimeError(

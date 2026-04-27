@@ -5,8 +5,16 @@ This is the main application entry point. All API endpoints are organized
 into routers under the routers/ package. Shared utilities are in utils/.
 """
 
+import logging
 import os
 from contextlib import asynccontextmanager
+
+# Configure logging - set LOG_LEVEL=DEBUG in .env for verbose output
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 from typing import Any
 
 from fastapi import FastAPI, Request

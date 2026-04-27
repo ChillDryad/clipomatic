@@ -284,24 +284,31 @@ async def get_frame(
     t: float = Query(2.0),
     user: User = Depends(get_current_user),
 ):
-    """Extract a single frame from a video at timestamp t and return it as JPEG."""
+    """
+    Extract a single frame from a video at timestamp t and return it as JPEG.
+    Supports both file paths and URLs (YouTube, Twitch, etc.).
+    """
     from pipeline.media import extract_frame
 
     # Resolve /workspace/... URL paths to the actual workspace directory
     if video.startswith("/workspace/"):
         video = os.path.join(WORKSPACE, video.removeprefix("/workspace/"))
 
-    # Validate video path is inside WORKSPACE
-    try:
-        video_abs = os.path.abspath(video)
-        workspace_abs = os.path.abspath(WORKSPACE)
-        if not video_abs.startswith(workspace_abs + os.sep) and video_abs != workspace_abs:
-            raise HTTPException(status_code=400, detail="Video path is outside workspace.")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid video path.")
+    # For URLs (http/https), skip file path validation
+    is_url = video.startswith("http://") or video.startswith("https://")
 
-    if not os.path.exists(video):
-        raise HTTPException(status_code=404, detail="Video file not found.")
+    if not is_url:
+        # Validate video path is inside WORKSPACE
+        try:
+            video_abs = os.path.abspath(video)
+            workspace_abs = os.path.abspath(WORKSPACE)
+            if not video_abs.startswith(workspace_abs + os.sep) and video_abs != workspace_abs:
+                raise HTTPException(status_code=400, detail="Video path is outside workspace.")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid video path.")
+
+        if not os.path.exists(video):
+            raise HTTPException(status_code=404, detail="Video file not found.")
 
     frames_dir = os.path.join(WORKSPACE, "frames")
     try:

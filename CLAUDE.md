@@ -85,13 +85,13 @@ python test_subtitle_rendering.py
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `LLM_BASE_URL` | `http://ollama:11434/v1` | OpenAI-compatible API endpoint |
-| `LLM_API_KEY` | `ollama` | API key for LLM endpoint |
-| `LLM_MODEL` | `llama3.1:8b` | Default model |
-| `WHISPER_MODEL` | `large-v3` | Whisper model size |
-| `WHISPER_DEVICE` | `auto` | `auto`, `cuda`, or `cpu` |
+| Variable         | Default                  | Description                    |
+| ---------------- | ------------------------ | ------------------------------ |
+| `LLM_BASE_URL`   | `http://ollama:11434/v1` | OpenAI-compatible API endpoint |
+| `LLM_API_KEY`    | `ollama`                 | API key for LLM endpoint       |
+| `LLM_MODEL`      | `llama3.1:8b`            | Default model                  |
+| `WHISPER_MODEL`  | `large-v3`               | Whisper model size             |
+| `WHISPER_DEVICE` | `auto`                   | `auto`, `cuda`, or `cpu`       |
 
 ## Code Structure
 
@@ -154,6 +154,7 @@ All long-running operations use **Server-Sent Events (SSE)** for real-time progr
 ### GPU Detection
 
 The transcription module automatically detects the best available compute backend:
+
 - **CUDA** → Nvidia/AMD GPUs (via ctranslate2)
 - **Apple Silicon** → CPU with Accelerate framework
 - **CPU fallback** → Generic CPU with int8 quantization
@@ -171,8 +172,8 @@ The transcription module automatically detects the best available compute backen
       "end": 18.2,
       "text": "Hello world",
       "words": [
-        {"word": "Hello", "start": 12.5, "end": 13.1, "probability": 0.99},
-        {"word": "world", "start": 13.1, "end": 13.8, "probability": 0.98}
+        { "word": "Hello", "start": 12.5, "end": 13.1, "probability": 0.99 },
+        { "word": "world", "start": 13.1, "end": 13.8, "probability": 0.98 }
       ]
     }
   ]
@@ -241,3 +242,5 @@ python test_subtitle_rendering.py
 - Highlight detection is LLM-bound (can be rate-limited)
 - Rendering is CPU/GPU-bound (FFmpeg)
 - Consider separate workers for each pipeline stage in high-volume setups
+
+# MOST OFTEN THIS APPLICATION IS NOT RUN LOCALLY. DO NOT ASSUME YOU WILL BE ABLE TO ACCESS INFORMATION LOCALLY, PROMPT THE USER FOR INFORMATION YOU NEED.

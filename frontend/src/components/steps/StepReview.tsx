@@ -96,7 +96,21 @@ function ClipCard({
   const [accounts, setAccounts] = useState<PlatformAccount[]>([])
   const [start, setStart] = useState(clip.start)
   const [end, setEnd] = useState(clip.end)
-  const [fontName, setFontName] = useState('Quicksand Bold')
+  const [fontName, setFontName] = useState('Quicksand')
+
+  // Font options dropdown
+  const FONT_OPTIONS = [
+    { value: 'Quicksand', label: 'Quicksand (Default)' },
+    { value: 'Arial', label: 'Arial' },
+    { value: 'Arial Black', label: 'Arial Black' },
+    { value: 'Impact', label: 'Impact' },
+    { value: 'Comic Sans MS', label: 'Comic Sans MS' },
+    { value: 'Times New Roman', label: 'Times New Roman' },
+    { value: 'Courier New', label: 'Courier New' },
+    { value: 'Verdana', label: 'Verdana' },
+    { value: 'Georgia', label: 'Georgia' },
+    { value: 'Palatino Linotype', label: 'Palatino Linotype' },
+  ]
   const [fontColor, setFontColor] = useState('#FFFFFF')
   const [highlightColor, setHighlightColor] = useState('#FFFFFF')
   const [outlineColor, setOutlineColor] = useState('#000000')
@@ -115,7 +129,6 @@ function ClipCard({
     gameplay: { x: 0, y: 0, w: 1344, h: 1080 },
     avatar: { x: 1382, y: 594, w: 518, h: 464 },
   })
-  const [previewSegPath, setPreviewSegPath] = useState<string | null>(null)
   const [renderProgress, setRenderProgress] = useState<{ value: number; label: string } | null>(null)
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -233,11 +246,10 @@ function ClipCard({
     navigate(`/video/${projectId}/timeline/${idx}${qs.toString() ? `?${qs.toString()}` : ''}`)
   }
 
-  const videoPath = source.videoPath
-  const twitchUrl = source.twitchUrl
+  const sourceUrl = source.twitchUrl ?? source.videoUrl ?? source.videoPath ?? source.audioPath ?? ''
 
   const handleImproveSubtitles = async () => {
-    const path = videoPath ?? source.audioPath
+    const path = source.videoPath ?? source.audioPath
     if (!path) return
     setImproveProgress({ value: 0, label: 'Starting…' })
     const key = `${path}___${start}___${end}`
@@ -261,33 +273,13 @@ function ClipCard({
     }
   }
 
-  // Auto-load preview on mount for Twitch sources
+  // Load video dimensions from frame endpoint on mount
   useEffect(() => {
-    if (!twitchUrl) return
-    const path = videoPath ?? source.audioPath ?? ''
-    if (!path) return
-    setError(null)
-    setRenderProgress({ value: 0, label: 'Downloading 15s preview segment…' })
-    const loadPreview = async () => {
-      try {
-        const segPath = await downloadSegment(
-          twitchUrl,
-          Math.max(0, start),
-          start + 15,
-          (value, label) => setRenderProgress({ value, label }),
-        )
-        setPreviewSegPath(segPath)
-        setRenderProgress(null)
-        const img = new Image()
-        img.onload = () => setVideoDims({ w: img.naturalWidth, h: img.naturalHeight })
-        img.src = `/workspace/${segPath.split('/').pop()}?t=2`
-      } catch (err) {
-        setRenderProgress(null)
-        setError(String(err))
-      }
-    }
-    loadPreview()
-  }, [twitchUrl, videoPath, source.audioPath, start])
+    if (!sourceUrl) return
+    const img = new Image()
+    img.onload = () => setVideoDims({ w: img.naturalWidth, h: img.naturalHeight })
+    img.src = `/api/frame?video=${encodeURIComponent(sourceUrl)}&t=2`
+  }, [sourceUrl])
 
   const handleCropChange = useCallback((gameplay: CropBox, avatar: CropBox) => {
     setCropBoxes({ gameplay, avatar })
@@ -305,7 +297,7 @@ function ClipCard({
     setIsCancellingRender(false)
 
     // Use improved transcript if available for this clip window
-    const path = videoPath ?? source.audioPath
+    const path = source.videoPath ?? source.audioPath
     const improvedKey = path ? `${path}___${start}___${end}` : null
     const improved = improvedKey ? improvedSegments.get(improvedKey) : null
     // Build the segment list: improved if available, otherwise fall back to original
@@ -315,10 +307,10 @@ function ClipCard({
 
     try {
       const controller = getAbortController('render')
-      const sourceUrl = source.twitchUrl || source.videoUrl
 
-      // For URL sources, download the clip segment on-demand (faster, less storage)
-      if (sourceUrl) {
+      // For URL sources (Twitch/YouTube), download the clip segment on-demand
+      if (sourceUrl && (source.twitchUrl || source.videoUrl)) {
+        setRenderProgress({ value: 0, label: 'Downloading clip segment…' })
         const segPath = await downloadSegment(
           sourceUrl, start, end,
           (value, label) => setRenderProgress({ value: value * 0.4, label }),
@@ -332,6 +324,7 @@ function ClipCard({
             end: s.end - start,
             words: s.words.map((w: { start: number; end: number }) => ({ ...w, start: w.start - start, end: w.end - start })),
           }))
+        setRenderProgress({ value: 0.4, label: 'Rendering clip…' })
         const outUrl = await renderClip(
           {
             video_path: segPath,
@@ -359,14 +352,22 @@ function ClipCard({
         )
         setRenderProgress(null)
         setDownloadUrl(outUrl)
-      } else if (videoPath) {
+      } else if (path) {
+        // For file sources, offset segment timestamps to match clip's local timeline
+        const offsetSegs = sourceSegments
+          .map((s: { end: number; start: number; text: string; words: { start: number; end: number }[] }) => ({
+            ...s,
+            start: s.start - start,
+            end: s.end - start,
+            words: s.words?.map((w: { start: number; end: number }) => ({ ...w, start: w.start - start, end: w.end - start })) || [],
+          }))
         const outUrl = await renderClip(
           {
-            video_path: videoPath,
-            clip: { ...clip, start, end },
+            video_path: path,
+            clip: { ...clip, start: 0, end: end - start },
             crop_avatar: cropBoxes.avatar,
             crop_game: cropBoxes.gameplay,
-            segments: sourceSegments,
+            segments: offsetSegs,
             font_name: fontName,
             font_color: fontColor,
             highlight_color: highlightColor,
@@ -400,11 +401,9 @@ function ClipCard({
     }
   }
 
-  // Build the preview image URL — use uploaded video at frame, or preview segment
+  // Build the preview image URL — use source URL directly (no segment download needed)
   const previewFrameUrl: string | null =
-    videoPath ? `/api/frame?video=${encodeURIComponent(videoPath)}&t=${(start + 2).toFixed(1)}`
-    : previewSegPath ? `/api/frame?video=${encodeURIComponent(previewSegPath)}&t=2`
-    : null
+    sourceUrl ? `/api/frame?video=${encodeURIComponent(sourceUrl)}&t=${(start + 2).toFixed(1)}` : null
 
   // CSS clip-path values for the live preview
   const avatarZoom = (() => {
@@ -499,12 +498,12 @@ function ClipCard({
           : <span className="text-[var(--ctp-subtext)] italic">no brand — pure viral moment</span>}
       </div>
 
-      {twitchUrl && (
+      {source.twitchUrl && (
         <div className="bg-[var(--ctp-surface)] border border-[var(--ctp-overlay)] rounded-lg p-2 space-y-1">
           <p className="text-xs text-[var(--ctp-subtext)]">Soft clip:</p>
-          <a href={twitchTimestamp(twitchUrl, start)} target="_blank" rel="noreferrer"
+          <a href={twitchTimestamp(source.twitchUrl, start)} target="_blank" rel="noreferrer"
             className="text-xs text-[var(--ctp-blue)] hover:opacity-80 break-all">
-            {twitchTimestamp(twitchUrl, start)}
+            {twitchTimestamp(source.twitchUrl, start)}
           </a>
         </div>
       )}
@@ -572,7 +571,7 @@ function ClipCard({
       </div>
 
       {/* Improve Subtitles */}
-      {(videoPath || source.audioPath) && (
+      {(source.videoPath || source.audioPath) && (
         <div className="border border-[var(--ctp-overlay)] rounded-lg p-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">Improve Subtitles</p>
@@ -669,8 +668,12 @@ function ClipCard({
 
         <div className="grid grid-cols-2 gap-3">
           <label className="space-y-1">
-            <span className="text-xs text-[var(--ctp-subtext)]">Font name</span>
-            <input type="text" value={fontName} onChange={(e) => setFontName(e.target.value)} className="input-field" />
+            <span className="text-xs text-[var(--ctp-subtext)]">Font</span>
+            <select value={fontName} onChange={(e) => setFontName(e.target.value)} className="input-field">
+              {FONT_OPTIONS.map(font => (
+                <option key={font.value} value={font.value}>{font.label}</option>
+              ))}
+            </select>
           </label>
           <label className="space-y-1">
             <span className="text-xs text-[var(--ctp-subtext)]">Font size</span>
@@ -879,7 +882,7 @@ function ClipCard({
         <ScheduleModal
           clip={{ ...clip, title: editableTitle, hashtags: editableHashtags }}
           clipKey={`${source.videoPath ?? source.audioPath ?? ''}___${idx}`}
-          videoPath={downloadUrl ?? videoPath ?? ''}
+          videoPath={downloadUrl ?? source.videoPath ?? ''}
           platformAccounts={accounts}
           onClose={() => setShowSchedule(false)}
           onScheduled={(jobId) => {
