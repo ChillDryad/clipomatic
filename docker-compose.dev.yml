@@ -1,0 +1,27 @@
+# Development environment — ports 7861/8001, ./workspace-dev
+# Use with: docker compose -f docker-compose.yml -f docker-compose.shared.yml -f docker-compose.dev.yml -p momiji-dev --env-file .env.dev up
+# Or: ./scripts/start-dev.sh (runs attached for live logs)
+
+services:
+  momiji-clipper:
+    container_name: momiji-clipper-dev
+    environment:
+      - LLM_BASE_URL=http://ollama-shared:11434/v1
+    volumes:
+      - ./workspace-dev:/app/workspace
+    networks:
+      - momiji-llm-network
+    depends_on:
+      - ollama-shared
+
+  frontend:
+    container_name: momiji-frontend-dev
+    ports:
+      - "7861:80"
+    depends_on:
+      - momiji-clipper
+
+networks:
+  momiji-llm-network:
+    external: true
+    name: momiji-llm-network

@@ -1,0 +1,33 @@
+# Shared Ollama service — isolated network, no host port exposure
+# Both production and development environments connect to this service
+# Run once: docker compose -f docker-compose.shared.yml up -d
+
+services:
+  ollama-shared:
+    image: ollama/ollama:latest
+    container_name: momiji-ollama-shared
+    volumes:
+      - ollama_shared_data:/root/.ollama
+    networks:
+      - momiji-llm-network
+    restart: unless-stopped
+    # Optional: Uncomment for Nvidia GPU support
+    # runtime: nvidia
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ollama_shared_data:
+    name: momiji-ollama-shared-data
+
+networks:
+  momiji-llm-network:
+    name: momiji-llm-network
+    driver: bridge
+    # Ollama is ONLY accessible within this network
+    # No ports are exposed to the host

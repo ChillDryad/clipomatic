@@ -260,6 +260,49 @@ async def add_clips_to_project(project_id: str, req: AddClipsRequest, user: User
     return {"success": True}
 
 
+@router.put("/{project_id}/clips/{clip_index}")
+async def update_project_clip(project_id: str, clip_index: int, req: dict, user: User = Depends(get_current_user)):
+    """Update a clip's metadata."""
+    async with get_session_cm() as session:
+        project = await session.get(VideoProject, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        if project.owner_id != user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        # Find clip by index
+        clips_result = await session.execute(
+            select(GeneratedClip).where(
+                GeneratedClip.project_id == project_id,
+                GeneratedClip.index == clip_index
+            )
+        )
+        clip = clips_result.scalar_one_or_none()
+        if not clip:
+            raise HTTPException(status_code=404, detail=f"Clip {clip_index} not found")
+
+        # Update fields
+        if "title" in req:
+            clip.title = req["title"]
+        if "start" in req:
+            clip.start_time = req["start"]
+        if "end" in req:
+            clip.end_time = req["end"]
+        if "reason" in req:
+            clip.reason = req["reason"]
+        if "virality_score" in req:
+            clip.virality_score = req["virality_score"]
+        if "brand_alignment" in req:
+            clip.brand_alignment = json.dumps(req["brand_alignment"]) if req["brand_alignment"] else None
+        if "hashtags" in req:
+            clip.hashtags = json.dumps(req["hashtags"]) if req["hashtags"] else None
+
+        await session.commit()
+
+    return {"success": True}
+
+
 @router.get("/{project_id}/clips")
 async def get_project_clips(project_id: str, user: User = Depends(get_current_user)):
     """

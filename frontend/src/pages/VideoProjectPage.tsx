@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from '../components/ui/Button'
-import { frameUrl } from '../api'
+import { Input } from '../components/ui/Input'
+import { frameUrl, updateClip } from '../api'
 import type { Clip } from '../types'
 import { formatDate, formatDuration, formatTime } from '../utils/format'
 import { getRoleBadgeClass } from '../utils/roles'
@@ -136,6 +137,13 @@ export function VideoProjectPage() {
 
   const sortedClips = [...clips].sort((a, b) => b.virality_score - a.virality_score)
 
+  const handleClipUpdate = (clipId: string, updated: Clip) => {
+    setClips(prev => prev.map(clip => {
+      const key = clip.id || `idx-${clip.index}`
+      return key === clipId ? updated : clip
+    }))
+  }
+
   return (
     <div className="space-y-6">
       {/* Project Header */}
@@ -223,7 +231,7 @@ export function VideoProjectPage() {
                   // Virtualizer will be initialized below
                 }}
               >
-                <ClipListVirtual clips={sortedClips} selectedIds={selectedClipIds} onToggle={toggleClip} projectId={project.id} />
+                <ClipListVirtual clips={sortedClips} selectedIds={selectedClipIds} onToggle={toggleClip} projectId={project.id} onClipUpdate={handleClipUpdate} />
               </div>
 
               {/* Batch Actions */}
@@ -322,6 +330,7 @@ interface ClipListVirtualProps {
   selectedIds: Set<string>
   onToggle: (clipId: string) => void
   projectId: string
+  onClipUpdate: (clipId: string, updated: Clip) => void
 }
 
 const getViralityBadgeColor = (score: number): string => {
@@ -330,15 +339,61 @@ const getViralityBadgeColor = (score: number): string => {
   return 'bg-[var(--ctp-overlay)]/20 text-[var(--ctp-subtext)] border-[var(--ctp-overlay)]/30'
 }
 
-function ClipListVirtual({ clips, selectedIds, onToggle, projectId }: ClipListVirtualProps) {
+function ClipListVirtual({ clips, selectedIds, onToggle, projectId, onClipUpdate }: ClipListVirtualProps) {
+  const [editingClipId, setEditingClipId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<Clip | null>(null)
+  const [saving, setSaving] = useState(false)
   const parentRef = useRef<HTMLDivElement>(null)
 
   const virtualizer = useVirtualizer({
     count: clips.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 100, // Estimate each clip item height
+    estimateSize: () => 120, // Estimate each clip item height (increased for edit mode)
     overscan: 2, // Render 2 items above/below viewport
   })
+
+  const handleEdit = (clip: Clip) => {
+    setEditingClipId(clip.id || `idx-${clip.index}`)
+    setEditForm({ ...clip })
+  }
+
+  const handleSave = async () => {
+    if (!editForm || !editingClipId) return
+    setSaving(true)
+    try {
+      const clipIndex = clips.findIndex(c => (c.id || `idx-${c.index}`) === editingClipId)
+      if (clipIndex === -1) return
+      await updateClip(projectId, clipIndex, {
+        title: editForm.title,
+        start: editForm.start,
+        end: editForm.end,
+        hashtags: editForm.hashtags,
+        brand_alignment: editForm.brand_alignment,
+        reason: editForm.reason,
+        virality_score: editForm.virality_score,
+      })
+      onClipUpdate(editingClipId, editForm)
+      setEditingClipId(null)
+      setEditForm(null)
+    } catch (err) {
+      console.error('Failed to update clip:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleCancel = () => {
+    setEditingClipId(null)
+    setEditForm(null)
+  }
+
+  const handleTimeChange = (field: 'start' | 'end', value: string) => {
+    if (!editForm) return
+    const seconds = parseFloat(value)
+    if (!isNaN(seconds)) {
+      setEditForm({ ...editForm, [field]: seconds })
+    }
+  }
 
   return (
     <div
@@ -356,7 +411,123 @@ function ClipListVirtual({ clips, selectedIds, onToggle, projectId }: ClipListVi
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const clip = clips[virtualRow.index]
           const clipKey = clip.id || `idx-${clip.index}`
+          const isEditing = editingClipId === clipKey
 
+          if (isEditing && editForm) {
+            // Edit mode
+            return (
+              <div
+                key={clipKey}
+                className="glass-card p-4"
+                role="listitem"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                <div className="space-y-3">
+                  {/* Title */}
+                  <div>
+                    <label className="text-xs text-[var(--ctp-subtext)] block mb-1">Title</label>
+                    <input
+                      type="text"
+                      value={editForm.title}
+                      onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                      className="glass-input input-field text-sm"
+                      placeholder="Clip title"
+                    />
+                  </div>
+
+                  {/* Time range */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-[var(--ctp-subtext)] block mb-1">Start (seconds)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={editForm.start}
+                        onChange={(e) => handleTimeChange('start', e.target.value)}
+                        className="glass-input input-field text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-[var(--ctp-subtext)] block mb-1">End (seconds)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={editForm.end}
+                        onChange={(e) => handleTimeChange('end', e.target.value)}
+                        className="glass-input input-field text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Reason */}
+                  <div>
+                    <label className="text-xs text-[var(--ctp-subtext)] block mb-1">Reason</label>
+                    <textarea
+                      value={editForm.reason || ''}
+                      onChange={(e) => setEditForm({ ...editForm, reason: e.target.value })}
+                      className="glass-input input-field text-sm"
+                      rows={2}
+                      placeholder="Why this clip is viral"
+                    />
+                  </div>
+
+                  {/* Hashtags */}
+                  <div>
+                    <label className="text-xs text-[var(--ctp-subtext)] block mb-1">Hashtags (comma-separated)</label>
+                    <input
+                      type="text"
+                      value={editForm.hashtags.join(', ')}
+                      onChange={(e) => setEditForm({
+                        ...editForm,
+                        hashtags: e.target.value.split(',').map(t => t.trim()).filter(Boolean)
+                      })}
+                      className="glass-input input-field text-sm"
+                      placeholder="#viral, #fyp, #gaming"
+                    />
+                  </div>
+
+                  {/* Brand alignment */}
+                  <div>
+                    <label className="text-xs text-[var(--ctp-subtext)] block mb-1">Brand Alignment (comma-separated)</label>
+                    <input
+                      type="text"
+                      value={editForm.brand_alignment.join(', ')}
+                      onChange={(e) => setEditForm({
+                        ...editForm,
+                        brand_alignment: e.target.value.split(',').map(t => t.trim()).filter(Boolean)
+                      })}
+                      className="glass-input input-field text-sm"
+                      placeholder="cozy energy, gap moe"
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2 pt-2">
+                    <Button
+                      onClick={handleSave}
+                      variant="primary"
+                      size="sm"
+                      disabled={saving}
+                    >
+                      {saving ? 'Saving...' : 'Save'}
+                    </Button>
+                    <Button onClick={handleCancel} variant="secondary" size="sm">
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )
+          }
+
+          // Display mode
           return (
             <div
               key={clipKey}
@@ -387,6 +558,7 @@ function ClipListVirtual({ clips, selectedIds, onToggle, projectId }: ClipListVi
                   <h3 className="font-semibold text-[var(--ctp-text)] truncate">{clip.title}</h3>
                   <p className="text-xs text-[var(--ctp-subtext)] mt-0.5">
                     {formatTime(clip.start)} - {formatTime(clip.end)}
+                    {editForm && ` (${formatTime(editForm.start)} - ${formatTime(editForm.end)})`}
                   </p>
                   <div className="flex gap-1.5 mt-1.5 flex-wrap">
                     {clip.hashtags.slice(0, 3).map(tag => (
@@ -400,6 +572,11 @@ function ClipListVirtual({ clips, selectedIds, onToggle, projectId }: ClipListVi
                       {clip.brand_alignment.join(', ')}
                     </p>
                   )}
+                  {clip.reason && (
+                    <p className="text-[10px] text-[var(--ctp-subtext)] mt-1 line-clamp-1">
+                      {clip.reason}
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-1.5 shrink-0">
@@ -407,12 +584,20 @@ function ClipListVirtual({ clips, selectedIds, onToggle, projectId }: ClipListVi
                     {clip.virality_score}
                   </span>
 
-                  <Link
-                    to={`/video/${projectId}/timeline/${clip.id || clip.index}`}
-                    className="btn-secondary text-xs py-1"
-                  >
-                    Edit
-                  </Link>
+                  <div className="flex flex-col gap-1">
+                    <button
+                      onClick={() => handleEdit(clip)}
+                      className="btn-secondary text-xs py-1"
+                    >
+                      Edit
+                    </button>
+                    <Link
+                      to={`/video/${projectId}/timeline/${clip.id || clip.index}`}
+                      className="btn-secondary text-xs py-1 text-center"
+                    >
+                      Timeline
+                    </Link>
+                  </div>
                 </div>
               </div>
             </div>

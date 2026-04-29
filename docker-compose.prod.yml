@@ -1,0 +1,27 @@
+# Production environment — ports 7860/8000, ./workspace
+# Use with: docker compose -f docker-compose.yml -f docker-compose.shared.yml -f docker-compose.prod.yml -p momiji-prod --env-file .env.prod up -d
+# Or: ./scripts/start-prod.sh
+
+services:
+  momiji-clipper:
+    container_name: momiji-clipper-prod
+    environment:
+      - LLM_BASE_URL=http://ollama-shared:11434/v1
+    volumes:
+      - ./workspace:/app/workspace
+    networks:
+      - momiji-llm-network
+    depends_on:
+      - ollama-shared
+
+  frontend:
+    container_name: momiji-frontend-prod
+    ports:
+      - "7860:80"
+    depends_on:
+      - momiji-clipper
+
+networks:
+  momiji-llm-network:
+    external: true
+    name: momiji-llm-network

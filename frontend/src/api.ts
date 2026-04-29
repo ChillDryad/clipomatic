@@ -481,6 +481,24 @@ export async function renderClip(
 // Clip metadata
 // ---------------------------------------------------------------------------
 
+/**
+ * Updates a clip's metadata by project ID and clip index.
+ */
+export async function updateClip(
+  projectId: string,
+  clipIndex: number,
+  patch: Partial<Clip>,
+): Promise<{ success: boolean }> {
+  const res = await fetch(`/api/projects/${projectId}/clips/${clipIndex}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 export async function updateClipMetadata(
   clipKey: string,
   patch: Partial<Clip>,
