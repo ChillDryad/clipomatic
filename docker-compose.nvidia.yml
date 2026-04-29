@@ -1,8 +1,7 @@
-# Nvidia GPU override — layer on top of any environment compose
-# Example: docker compose -f docker-compose.yml -f docker-compose.shared.yml -f docker-compose.prod.yml -f docker-compose.nvidia.yml -p momiji-prod --env-file .env.prod up -d
+# Nvidia GPU override — layer on top of prod or dev compose
+# Example: docker compose -f docker-compose.prod.yml -f docker-compose.nvidia.yml -p momiji-prod --env-file .env.prod up -d
 
 services:
-  # Production GPU override
   momiji-clipper-prod:
     build:
       args:
@@ -19,7 +18,6 @@ services:
               count: all
               capabilities: [gpu]
 
-  # Development GPU override
   momiji-clipper-dev:
     build:
       args:
@@ -36,7 +34,6 @@ services:
               count: all
               capabilities: [gpu]
 
-  # Shared Ollama GPU override
   ollama-shared:
     runtime: nvidia
     environment:

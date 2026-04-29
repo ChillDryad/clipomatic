@@ -23,9 +23,7 @@ fi
 echo "Starting development services (attached mode - Ctrl+C to stop)..."
 echo ""
 
-docker compose -f docker-compose.yml \
-    -f docker-compose.shared.yml \
-    -f docker-compose.dev.yml \
+docker compose -f docker-compose.dev.yml \
     -p momiji-dev \
     --env-file .env.dev \
     up

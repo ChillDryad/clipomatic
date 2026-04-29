@@ -21,9 +21,7 @@ if ! docker ps --format '{{.Names}}' | grep -q "^momiji-ollama-shared$"; then
 fi
 
 echo "Starting production services..."
-docker compose -f docker-compose.yml \
-    -f docker-compose.shared.yml \
-    -f docker-compose.prod.yml \
+docker compose -f docker-compose.prod.yml \
     -p momiji-prod \
     --env-file .env.prod \
     up -d

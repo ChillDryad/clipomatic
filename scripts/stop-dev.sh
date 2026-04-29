@@ -9,9 +9,7 @@ cd "$PROJECT_ROOT"
 
 echo "=== Stopping Development Environment ==="
 
-docker compose -f docker-compose.yml \
-    -f docker-compose.shared.yml \
-    -f docker-compose.dev.yml \
+docker compose -f docker-compose.dev.yml \
     -p momiji-dev \
     down
 

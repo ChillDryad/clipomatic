@@ -21,8 +21,6 @@ services:
       - LLM_MODEL=${LLM_MODEL:-llama3}
       - JWT_SECRET=${JWT_SECRET}
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
-    depends_on:
-      - ollama
     restart: unless-stopped
 
   frontend:
@@ -35,15 +33,3 @@ services:
     depends_on:
       - momiji-clipper
     restart: unless-stopped
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: momiji-ollama
-    volumes:
-      - ollama_data:/root/.ollama
-    env_file:
-      - .env
-    restart: unless-stopped
-
-volumes:
-  ollama_data:

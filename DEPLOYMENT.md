@@ -5,25 +5,25 @@ This document describes how to run both production and development environments 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Host Machine                            │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │           Shared Ollama (isolated network)           │   │
-│  │  Container: momiji-ollama-shared                     │   │
-│  │  Volume: ollama_shared_data                          │   │
-│  │  Network: momiji-llm-network (internal only)         │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                          ▲                                  │
-│         ┌────────────────┴────────────────┐                │
-│         │                                 │                │
-│  ┌──────────────┐                 ┌──────────────┐        │
-│  │  Production  │                 │ Development  │        │
-│  │              │                 │              │        │
-│  │ Port 7860    │                 │ Port 7861    │        │
+┌───────────────────────────────────────────────────┐
+│                     Host Machine                  │
+│                                                   │
+│  ┌─────────────────────────────────────────────┐  │
+│  │           Shared Ollama (isolated network)  │  │
+│  │  Container: momiji-ollama-shared            │  │
+│  │  Volume: ollama_shared_data                 │  │
+│  │  Network: momiji-llm-network (internal only)│  │
+│  └─────────────────────────────────────────────┘  │
+│                          ▲                        │
+│         ┌────────────────┴────────────────┐       │
+│         │                                 │       │
+│  ┌──────────────┐                 ┌────────────────┐      │
+│  │  Production  │                 │ Development    │      │
+│  │              │                 │                │      │
+│  │ Port 7860    │                 │ Port 7861      │      │
 │  │ ./workspace  │                 │ ./workspace-dev│      │
-│  └──────────────┘                 └──────────────┘        │
-└─────────────────────────────────────────────────────────────┘
+│  └──────────────┘                 └────────────────┘      │
+└───────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
@@ -66,9 +66,7 @@ cp .env.dev.example .env.dev
 
 ```bash
 # Start (detached)
-docker compose -f docker-compose.yml \
-    -f docker-compose.shared.yml \
-    -f docker-compose.prod.yml \
+docker compose -f docker-compose.prod.yml \
     -p momiji-prod \
     --env-file .env.prod \
     up -d
@@ -87,9 +85,7 @@ docker compose -p momiji-prod restart
 
 ```bash
 # Start (attached)
-docker compose -f docker-compose.yml \
-    -f docker-compose.shared.yml \
-    -f docker-compose.dev.yml \
+docker compose -f docker-compose.dev.yml \
     -p momiji-dev \
     --env-file .env.dev \
     up
@@ -102,18 +98,14 @@ docker compose -f docker-compose.yml \
 
 ```bash
 # Production with GPU
-docker compose -f docker-compose.yml \
-    -f docker-compose.shared.yml \
-    -f docker-compose.prod.yml \
+docker compose -f docker-compose.prod.yml \
     -f docker-compose.nvidia.yml \
     -p momiji-prod \
     --env-file .env.prod \
     up -d
 
 # Development with GPU
-docker compose -f docker-compose.yml \
-    -f docker-compose.shared.yml \
-    -f docker-compose.dev.yml \
+docker compose -f docker-compose.dev.yml \
     -f docker-compose.nvidia.yml \
     -p momiji-dev \
     --env-file .env.dev \
@@ -122,17 +114,17 @@ docker compose -f docker-compose.yml \
 
 ## Access Points
 
-| Environment | Frontend | Backend |
-|-------------|----------|---------|
+| Environment | Frontend              | Backend               |
+| ----------- | --------------------- | --------------------- |
 | Production  | http://localhost:7860 | http://localhost:8000 |
 | Development | http://localhost:7861 | http://localhost:8001 |
 
 ## Data Isolation
 
-| Resource | Production | Development |
-|----------|------------|-------------|
-| Workspace | `./workspace/` | `./workspace-dev/` |
-| Database | `./workspace/momiji.db` | `./workspace-dev/momiji.db` |
+| Resource      | Production                    | Development                   |
+| ------------- | ----------------------------- | ----------------------------- |
+| Workspace     | `./workspace/`                | `./workspace-dev/`            |
+| Database      | `./workspace/momiji.db`       | `./workspace-dev/momiji.db`   |
 | Ollama Models | Shared (`ollama_shared_data`) | Shared (`ollama_shared_data`) |
 
 ## Troubleshooting
@@ -175,6 +167,16 @@ docker network ls | grep momiji-llm-network
 # Recreate network
 docker compose -f docker-compose.shared.yml down
 docker compose -f docker-compose.shared.yml up -d
+```
+
+### Frontend Can't Connect to Backend
+
+If you see `host not found in upstream "momiji-clipper"`:
+
+```bash
+# Rebuild frontend to pick up nginx template changes
+docker compose -f docker-compose.dev.yml -p momiji-dev --env-file .env.dev build frontend
+docker compose -f docker-compose.dev.yml -p momiji-dev --env-file .env.dev up -d
 ```
 
 ## Cleanup

@@ -1,25 +1,47 @@
-# Development environment — ports 7861/8001, ./workspace-dev
-# Use with: docker compose -f docker-compose.yml -f docker-compose.shared.yml -f docker-compose.dev.yml -p momiji-dev --env-file .env.dev up
+# Development environment — standalone compose file
+# Ports: 7861 (frontend), 8001 (backend)
+# Workspace: ./workspace-dev
+# Prerequisite: Start shared Ollama first: docker compose -f docker-compose.shared.yml up -d
+# Use with: docker compose -f docker-compose.dev.yml -p momiji-dev --env-file .env.dev up
 # Or: ./scripts/start-dev.sh (runs attached for live logs)
 
 services:
-  momiji-clipper:
+  momiji-clipper-dev:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: python:3.10-slim
     container_name: momiji-clipper-dev
     environment:
+      - WORKSPACE_DIR=/app/workspace
+      - WHISPER_MODEL=${WHISPER_MODEL:-large-v3}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
       - LLM_BASE_URL=http://ollama-shared:11434/v1
+      - LLM_API_KEY=${LLM_API_KEY:-ollama}
+      - LLM_MODEL=${LLM_MODEL:-llama3}
+      - JWT_SECRET=${JWT_SECRET}
+      - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
     volumes:
       - ./workspace-dev:/app/workspace
     networks:
       - momiji-llm-network
-    depends_on:
-      - ollama-shared
+    restart: unless-stopped
 
-  frontend:
+  momiji-frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: momiji-frontend-dev
+    environment:
+      - BACKEND_HOST=momiji-clipper-dev
     ports:
       - "7861:80"
     depends_on:
-      - momiji-clipper
+      - momiji-clipper-dev
+    networks:
+      - momiji-llm-network
+    restart: unless-stopped
 
 networks:
   momiji-llm-network:
