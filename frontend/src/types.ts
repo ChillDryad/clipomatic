@@ -26,6 +26,7 @@ export interface Clip {
   start: number
   end: number
   reason: string
+  recommendation_reason?: string
   virality_score: number
   brand_alignment: string[]
   hashtags: string[]

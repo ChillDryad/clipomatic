@@ -387,6 +387,7 @@ class VideoProject(Base):
     owner_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     team_id: Mapped[str | None] = mapped_column(String, ForeignKey("teams.id"), nullable=True, index=True)
     source_path: Mapped[str] = mapped_column(String, nullable=False)  # Original file path or URL
+    original_source: Mapped[str | None] = mapped_column(String, nullable=True)  # Original URL (YouTube/Twitch/Kick)
     original_filename: Mapped[str] = mapped_column(String, nullable=False)
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String, default="pending")  # pending, processing, complete, failed
@@ -416,6 +417,7 @@ class GeneratedClip(Base):
     start_time: Mapped[float] = mapped_column(Float, nullable=False)
     end_time: Mapped[float] = mapped_column(Float, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recommendation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     virality_score: Mapped[int | None] = mapped_column(nullable=True)
     brand_alignment: Mapped[str | None] = mapped_column(Text, nullable=True)
     hashtags: Mapped[str | None] = mapped_column(Text, nullable=True)

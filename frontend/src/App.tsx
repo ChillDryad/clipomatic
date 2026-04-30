@@ -5,7 +5,6 @@ import { PageLayout } from './components/layout/PageLayout'
 import { HomePage } from './pages/HomePage'
 import { DashboardPage } from './pages/DashboardPage'
 import { PipelinePage } from './pages/PipelinePage'
-import { VideoDetailPage } from './pages/VideoDetailPage'
 import { VideoProjectPage } from './pages/VideoProjectPage'
 import { TimelineEditorPage } from './pages/TimelineEditorPage'
 import { SchedulePage } from './pages/SchedulePage'
@@ -93,16 +92,6 @@ export default function App() {
                 <ProtectedRoute>
                   <PageLayout>
                     <PipelinePage />
-                  </PageLayout>
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/video/:sourcePath"
-              element={
-                <ProtectedRoute>
-                  <PageLayout>
-                    <VideoDetailPage />
                   </PageLayout>
                 </ProtectedRoute>
               }

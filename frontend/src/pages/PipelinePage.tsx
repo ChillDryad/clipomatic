@@ -3,12 +3,14 @@ import { StepIngest } from '../components/steps/StepIngest'
 import { StepTranscribe } from '../components/steps/StepTranscribe'
 import { StepHighlights } from '../components/steps/StepHighlights'
 import { StepReview } from '../components/steps/StepReview'
+import { BreadcrumbSteppers } from '../components/layout/BreadcrumbSteppers'
 
 export function PipelinePage() {
   const { step, source, transcript, clips } = usePipeline()
 
   return (
     <div className="space-y-6">
+      <BreadcrumbSteppers />
       {/* Always show ingest */}
       <div className="glass-card p-5">
         <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest mb-4">Load Video</p>

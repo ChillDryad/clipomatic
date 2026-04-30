@@ -22,7 +22,7 @@ BRAND_PILLARS = """
 # Single-turn system prompt for Gemma4 — outputs JSON directly
 SINGLE_TURN_SYSTEM = f"""You are a viral clip editor specializing in VTuber VOD content.
 You will receive a timestamped transcript. Each line looks like:
-  [MM:SS.ss] spoken words
+ [MM:SS.ss] spoken words
 
 Find 3-5 moments that would make great short clips (9–90 seconds each).
 Score each clip 0–100 purely on viral potential — hook strength, emotional peak, shareability.
@@ -31,23 +31,26 @@ Note which brand pillars it touches (if any).
 The brand pillars are:{BRAND_PILLARS}
 
 Output a JSON array. Each clip object must have exactly these keys:
-  "title"           (string) — punchy, clickbaity title
-  "start"           (NUMBER) — start time in SECONDS only (e.g., 125.0 NOT "02:05.00")
-  "end"             (NUMBER) — end time in SECONDS only (e.g., 192.0 NOT "03:12.00")
-  "reason"          (string) — one sentence explaining why it's viral
-  "virality_score"  (integer 0–100) — viral potential only
-  "brand_alignment" (array of strings) — matching pillar names, or empty array
-  "hashtags"        (array of strings) — e.g. ["#VTuber", "#GapMoe"]
+ "title" (string) — Enticing but not clickbait-y. MUST include exactly 2-3 relevant hashtags at the end of the string.
+ "start" (NUMBER) — start time in SECONDS only (e.g., 125.0 NOT "02:05.00")
+ "end" (NUMBER) — end time in SECONDS only (e.g., 192.0 NOT "03:12.00")
+ "reason" (string) — one sentence explaining why it's viral
+ "virality_score" (integer 0–100) — viral potential only
+ "brand_alignment" (array of strings) — matching pillar names, or empty array
+ "description" (string) — A punchy, engaging caption that expands on the hook and encourages viewers to visit the stream.
+ "description_hashtags" (array of strings) — A tiered list of supplemental hashtags (Broad, Niche, and Brand tags) to be placed at the bottom of the description.
+ "recommendation_reason" (string) — Detailed explanation of why this specific moment was recommended, referencing the transcript content and brand pillars.
 
-CRITICAL: Convert timestamps to SECONDS. Example: [02:05.00] → start: 125.0 (NOT "02:05.00")
+CRITICAL: 
+1. Title Format: [Enticing Hook] [Hashtag 1] [Hashtag 2]. Max 3 hashtags total in title.
+2. Convert timestamps to SECONDS. Example: [02:05.00] → start: 125.0 (NOT "02:05.00")
 Formula: seconds = minutes * 60 + seconds
-
-Clips MUST be 9–90 seconds. Trim ruthlessly — cut in just before the moment, out right after it lands.
+3. Clips MUST be 9–90 seconds.
 
 Example output:
 [
-  {{"title": "She absolutely lost it", "start": 125.0, "end": 192.0, "reason": "Peak emotional outburst", "virality_score": 91, "brand_alignment": ["gap moe / sudden gaming rage"], "hashtags": ["#VTuber", "#GapMoe"]}},
-  {{"title": "Wait what happened??", "start": 540.0, "end": 585.0, "reason": "Absurdist one-liner", "virality_score": 78, "brand_alignment": ["deep lore drops / funny out-of-context quotes"], "hashtags": ["#VTuber", "#Lore"]}}
+ {{"title": "She absolutely lost it 💀 #GamingFail #Shorts", "start": 125.0, "end": 192.0, "reason": "Peak emotional outburst with perfect comedic timing", "recommendation_reason": "This moment captures a sudden shift from cozy energy to intense gaming rage - the contrast is what makes it viral. The screaming reaction at 2:05 followed by immediate apology hits the 'gap moe' pillar perfectly. Comment engagement will be high because viewers love relatable gaming frustration.", "virality_score": 91, "brand_alignment": ["gap moe / sudden gaming rage"], "description": "Momiji's patience finally snapped and the result was pure chaos. Come hang out on the balcony for more rage-fueled gaming! 🏮", "description_hashtags": ["#VTuber", "#GapMoe", "#CozyGaming", "#MomijiYoru"]}},
+ {{"title": "Wait what happened?? 🏮 #VTuber #Lore", "start": 540.0, "end": 585.0, "reason": "Absurdist one-liner that makes no sense out of context", "recommendation_reason": "This lore drop comes completely out of nowhere during a quiet moment, creating maximum whiplash. The deadpan delivery of such an absurd statement is peak VTuber content - it's the kind of quote that gets clipped and shared because it's so bizarre. Works especially well as a short because it needs no setup.", "virality_score": 78, "brand_alignment": ["deep lore drops / funny out-of-context quotes"], "description": "A sudden lore drop that changes everything we knew about the urban garden. You won't believe what she just admitted... 🌸", "description_hashtags": ["#Storytime", "#UrbanGarden", "#MomijiYoru", "#IndieGames"]}}
 ]
 
 Output ONLY the JSON array. No markdown, no explanations, no code fences."""
@@ -106,6 +109,7 @@ def _coerce_clip(c: dict) -> dict | None:
     start = c.get("start") or c.get("start_time") or c.get("start_seconds")
     end   = c.get("end")   or c.get("end_time")   or c.get("end_seconds")
     reason = (c.get("reason") or c.get("why") or c.get("description") or c.get("explanation") or "")
+    recommendation_reason = c.get("recommendation_reason") or c.get("detailed_reason") or c.get("why_recommended") or ""
     virality_score = c.get("virality_score") or c.get("score") or c.get("viral_score") or 0
     hashtags = c.get("hashtags") or c.get("tags") or []
     brand_alignment = c.get("brand_alignment") or c.get("brand") or c.get("brand_pillars") or []
@@ -128,6 +132,7 @@ def _coerce_clip(c: dict) -> dict | None:
             "start": float(start),
             "end":   float(end),
             "reason": str(reason),
+            "recommendation_reason": str(recommendation_reason) if recommendation_reason else None,
             "virality_score": max(0, min(100, score)),
             "brand_alignment": brand_alignment,
             "hashtags": tags,

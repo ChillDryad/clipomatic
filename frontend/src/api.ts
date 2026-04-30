@@ -1050,6 +1050,7 @@ export interface VideoProject {
   owner_id: string
   team_id: string | null
   source_path: string
+  original_source: string
   original_filename: string
   duration: number | null
   status: 'pending' | 'processing' | 'complete' | 'failed'
@@ -1075,6 +1076,7 @@ export interface ProjectClip {
 
 export async function createProject(data: {
   source_path: string
+  original_source?: string | null
   original_filename: string
   duration?: number
 }): Promise<VideoProject> {

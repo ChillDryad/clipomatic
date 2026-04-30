@@ -199,7 +199,7 @@ async def ingest_url(req: UrlRequest, user: User = Depends(get_current_user)):
             select(VideoProject).where(
                 VideoProject.source_path == req.url,
                 VideoProject.owner_id == user.id,
-            )
+            ).limit(1)
         )
         project = existing.scalar_one_or_none()
         if project:
@@ -244,7 +244,8 @@ async def ingest_url(req: UrlRequest, user: User = Depends(get_current_user)):
         async with get_session_cm() as session:
             project = VideoProject(
                 owner_id=user.id,
-                source_path=req.url,
+                source_path=result["videoPath"],
+                original_source=req.url,  # Store original URL
                 original_filename=video_title or os.path.basename(result["videoPath"]),
                 duration=result.get("duration"),
                 status="loaded",
@@ -273,7 +274,7 @@ async def ingest_twitch_stream(req: UrlRequest, user: User = Depends(get_current
             select(VideoProject).where(
                 VideoProject.source_path.like(f"%{vod_id}%"),
                 VideoProject.owner_id == user.id,
-            )
+            ).limit(1)
         )
         project = existing.scalar_one_or_none()
         if project:
@@ -320,7 +321,8 @@ async def ingest_twitch_stream(req: UrlRequest, user: User = Depends(get_current
         async with get_session_cm() as session:
             project = VideoProject(
                 owner_id=user.id,
-                source_path=req.url,
+                source_path=result["audioPath"],
+                original_source=req.url,  # Store original Twitch URL
                 original_filename=video_title or f"Twitch VOD {vod_id}",
                 duration=result.get("duration"),
                 status="loaded",

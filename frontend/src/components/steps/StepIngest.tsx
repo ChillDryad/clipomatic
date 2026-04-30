@@ -79,6 +79,7 @@ export function StepIngest() {
     try {
       const project = await createProject({
         source_path: sourcePath,
+        original_source: videoUrl,
         original_filename: displayName,
         duration: duration || undefined,
       })

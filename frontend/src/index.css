@@ -49,6 +49,29 @@
   --glow-review: rgba(203, 166, 247, 0.25);
 }
 
+/* Animation for expanding cards */
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 1200px;
+  }
+}
+
+.animate-expand {
+  animation: slideDown 0.3s ease-out;
+}
+
+/* Smooth transitions for all clip cards */
+.glass-card {
+  transition: all 0.2s ease-in-out;
+}
+
 @layer base {
   :root {
     /* Catppuccin Frappé (light) */

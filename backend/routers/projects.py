@@ -27,9 +27,16 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/projects", tags=["Video Projects"])
 
+# Get WORKSPACE from environment
+WORKSPACE = os.environ.get(
+    "WORKSPACE_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "workspace"),
+)
+
 
 class CreateProjectRequest(BaseModel):
     source_path: str
+    original_source: str | None = None  # Original URL (YouTube/Twitch/Kick)
     original_filename: str
     duration: float | None = None
     team_id: str | None = None
@@ -85,6 +92,7 @@ async def create_project(req: CreateProjectRequest, user: User = Depends(get_cur
             owner_id=user.id,
             team_id=req.team_id,
             source_path=req.source_path,
+            original_source=req.original_source,
             original_filename=req.original_filename,
             duration=req.duration,
             status="pending",
@@ -98,6 +106,7 @@ async def create_project(req: CreateProjectRequest, user: User = Depends(get_cur
         "owner_id": project.owner_id,
         "team_id": project.team_id,
         "source_path": project.source_path,
+        "original_source": project.original_source,
         "original_filename": project.original_filename,
         "duration": project.duration,
         "status": project.status,
@@ -143,6 +152,7 @@ async def list_projects(
                 "owner_id": p.owner_id,
                 "team_id": p.team_id,
                 "source_path": p.source_path,
+                "original_source": p.original_source,
                 "original_filename": p.original_filename,
                 "duration": p.duration,
                 "status": p.status,
@@ -189,6 +199,7 @@ async def get_project(project_id: str, user: User = Depends(get_current_user)):
         "owner_id": project.owner_id,
         "team_id": project.team_id,
         "source_path": project.source_path,
+        "original_source": project.original_source,
         "original_filename": project.original_filename,
         "duration": project.duration,
         "status": project.status,
@@ -201,6 +212,7 @@ async def get_project(project_id: str, user: User = Depends(get_current_user)):
                 "start_time": c.start_time,
                 "end_time": c.end_time,
                 "reason": c.reason,
+                "recommendation_reason": c.recommendation_reason,
                 "virality_score": c.virality_score,
                 "brand_alignment": json.loads(c.brand_alignment) if c.brand_alignment else [],
                 "hashtags": json.loads(c.hashtags) if c.hashtags else [],
@@ -249,6 +261,7 @@ async def add_clips_to_project(project_id: str, req: AddClipsRequest, user: User
                 start_time=clip_data.get("start", 0),
                 end_time=clip_data.get("end", 0),
                 reason=clip_data.get("reason"),
+                recommendation_reason=clip_data.get("recommendation_reason"),
                 virality_score=clip_data.get("virality_score"),
                 brand_alignment=json.dumps(clip_data.get("brand_alignment", [])) if clip_data.get("brand_alignment") else None,
                 hashtags=json.dumps(clip_data.get("hashtags", [])) if clip_data.get("hashtags") else None,
@@ -291,6 +304,8 @@ async def update_project_clip(project_id: str, clip_index: int, req: dict, user:
             clip.end_time = req["end"]
         if "reason" in req:
             clip.reason = req["reason"]
+        if "recommendation_reason" in req:
+            clip.recommendation_reason = req["recommendation_reason"]
         if "virality_score" in req:
             clip.virality_score = req["virality_score"]
         if "brand_alignment" in req:
@@ -333,6 +348,7 @@ async def get_project_clips(project_id: str, user: User = Depends(get_current_us
                         "start": c.start_time,
                         "end": c.end_time,
                         "reason": c.reason,
+                        "recommendation_reason": c.recommendation_reason,
                         "virality_score": c.virality_score,
                         "brand_alignment": json.loads(c.brand_alignment) if c.brand_alignment else [],
                         "hashtags": json.loads(c.hashtags) if c.hashtags else [],
@@ -363,6 +379,7 @@ async def get_project_clips(project_id: str, user: User = Depends(get_current_us
                 start_time=clip.get("start", 0),
                 end_time=clip.get("end", 0),
                 reason=clip.get("reason"),
+                recommendation_reason=clip.get("recommendation_reason"),
                 virality_score=clip.get("virality_score"),
                 brand_alignment=json.dumps(clip.get("brand_alignment", [])) if clip.get("brand_alignment") else None,
                 hashtags=json.dumps(clip.get("hashtags", [])) if clip.get("hashtags") else None,
@@ -385,6 +402,7 @@ async def get_project_clips(project_id: str, user: User = Depends(get_current_us
                     "start": clip.get("start", 0),
                     "end": clip.get("end", 0),
                     "reason": clip.get("reason"),
+                    "recommendation_reason": clip.get("recommendation_reason"),
                     "virality_score": clip.get("virality_score"),
                     "brand_alignment": clip.get("brand_alignment", []),
                     "hashtags": clip.get("hashtags", []),
@@ -497,6 +515,7 @@ async def get_project_pipeline_state(project_id: str, user: User = Depends(get_c
                 "start": c.start_time,
                 "end": c.end_time,
                 "reason": c.reason,
+                "recommendation_reason": c.recommendation_reason,
                 "virality_score": c.virality_score,
                 "brand_alignment": json.loads(c.brand_alignment) if c.brand_alignment else [],
                 "hashtags": json.loads(c.hashtags) if c.hashtags else [],
@@ -519,6 +538,7 @@ async def get_project_pipeline_state(project_id: str, user: User = Depends(get_c
         "project": {
             "id": project.id,
             "source_path": project.source_path,
+            "original_source": project.original_source,
             "original_filename": project.original_filename,
             "duration": project.duration,
             "status": project.status,
