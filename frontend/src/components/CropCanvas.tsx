@@ -237,7 +237,7 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   ref={gameplayRef}
                   x={gameplay.x} y={gameplay.y}
                   width={gameplay.width} height={gameplay.height}
-                  fill="rgba(30, 30, 46, 0.3)"
+                  fill="transparent"
                   stroke="#ffb7c5"
                   strokeWidth={selected === 'gameplay' ? 3 : 2}
                   cornerRadius={8}
@@ -280,7 +280,7 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   ref={avatarRef}
                   x={avatar.x} y={avatar.y}
                   width={avatar.width} height={avatar.height}
-                  fill="rgba(30, 30, 46, 0.3)"
+                  fill="transparent"
                   stroke="#00ff9d"
                   strokeWidth={selected === 'avatar' ? 3 : 2}
                   cornerRadius={8}
