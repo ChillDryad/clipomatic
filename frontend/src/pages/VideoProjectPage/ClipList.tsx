@@ -9,6 +9,7 @@ import {
   getAbortController,
   cancelOperation,
   transcribeSegment,
+  getVideoDimensions,
 } from "../../api";
 import type { Clip, CropBox, Transcript } from "../../types";
 import { formatTime } from "../../utils/format";
@@ -26,6 +27,7 @@ interface ClipListProps {
   sourcePath: string;
   originalSource: string | null;
   nvencAvailable: boolean;
+  videoDimensions: { w: number; h: number };
 }
 
 export function ClipList({
@@ -37,6 +39,7 @@ export function ClipList({
   sourcePath,
   originalSource,
   nvencAvailable,
+  videoDimensions,
 }: ClipListProps) {
   const [expandedClipId, setExpandedClipId] = useState<string | null>(null);
   const [cropCanvasKey, setCropCanvasKey] = useState(0);
@@ -480,6 +483,7 @@ export function ClipList({
                 cropRefreshing={cropRefreshing}
                 sourcePath={sourcePath}
                 originalSource={originalSource}
+                videoDimensions={videoDimensions}
                 nvencAvailable={nvencAvailable}
                 hasImprovedTranscript={hasImprovedTranscript}
                 improveProgress={improveProgress[clipKey] ?? null}

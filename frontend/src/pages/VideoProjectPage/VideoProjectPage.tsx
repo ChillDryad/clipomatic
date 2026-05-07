@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import { Button } from "../../components/ui/Button";
-import { getConfig, deleteProject, transcribe, detectHighlights, getCachedTranscript, getAbortController, cancelOperation } from "../../api";
+import { getConfig, deleteProject, transcribe, detectHighlights, getCachedTranscript, getAbortController, cancelOperation, getVideoDimensions } from "../../api";
 import type { Clip } from "../../types";
 import { getRoleBadgeClass } from "../../utils/roles";
 import { ProjectHeader } from "./ProjectHeader";
@@ -24,6 +24,7 @@ export function VideoProjectPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [nvencAvailable, setNvencAvailable] = useState(true);
+  const [videoDimensions, setVideoDimensions] = useState<{ w: number; h: number }>({ w: 1920, h: 1080 });
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeProgress, setTranscribeProgress] = useState<{ value: number; label: string } | null>(null);
   const [selectedWhisperModel, setSelectedWhisperModel] = useState("large-v3");
@@ -69,6 +70,15 @@ export function VideoProjectPage() {
       if (!projectRes.ok) throw new Error(await projectRes.text());
       const projectData = await projectRes.json();
       setProject(projectData);
+
+      // Fetch video dimensions
+      if (projectData.source_path) {
+        getVideoDimensions(projectData.source_path)
+          .then(setVideoDimensions)
+          .catch((err) => {
+            console.error("Failed to get video dimensions:", err);
+          });
+      }
 
       if (clipsRes.ok) {
         const clipsData = await clipsRes.json();
@@ -312,6 +322,7 @@ export function VideoProjectPage() {
             sourcePath={project.source_path}
             originalSource={project.original_source}
             nvencAvailable={nvencAvailable}
+            videoDimensions={videoDimensions}
           />
         )}
       </div>

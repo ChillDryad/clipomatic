@@ -12,6 +12,7 @@ interface ClipSectionPreviewCropProps {
   segmentPath?: string;
   refreshing: boolean;
   canvasKey: number;
+  videoDimensions: { w: number; h: number };
   onCropChange: (gameplay: CropBox, avatar: CropBox) => void;
   onRefresh: () => void;
   onLayoutChange: (
@@ -30,6 +31,7 @@ export function ClipSectionPreviewCrop({
   segmentPath,
   refreshing,
   canvasKey,
+  videoDimensions,
   onCropChange,
   onRefresh,
   onLayoutChange,
@@ -39,8 +41,13 @@ export function ClipSectionPreviewCrop({
   const frameAt = segmentPath ? 0 : clipStart;
   const frameTime = clipStart + 2;
 
-  const avatarPos = `${((cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / 1920) * 100}% ${((cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / 1080) * 100}%`;
-  const gameplayPos = `${((cropBoxes.gameplay.x + cropBoxes.gameplay.w / 2) / 1920) * 100}% ${((cropBoxes.gameplay.y + cropBoxes.gameplay.h / 2) / 1080) * 100}%`;
+  // Calculate crop positions as percentages for object-position
+  const avatarPos = `${((cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoDimensions.w) * 100}% ${((cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoDimensions.h) * 100}%`;
+  const gameplayPos = `${((cropBoxes.gameplay.x + cropBoxes.gameplay.w / 2) / videoDimensions.w) * 100}% ${((cropBoxes.gameplay.y + cropBoxes.gameplay.h / 2) / videoDimensions.h) * 100}%`;
+
+  // Calculate clip-path for proper cropping (shows only the selected region)
+  const avatarClip = `inset(${(cropBoxes.avatar.y / videoDimensions.h) * 100}% ${(100 - (cropBoxes.avatar.x + cropBoxes.avatar.w) / videoDimensions.w * 100)}% ${(100 - (cropBoxes.avatar.y + cropBoxes.avatar.h) / videoDimensions.h * 100)}% ${(cropBoxes.avatar.x / videoDimensions.w) * 100}%)`;
+  const gameplayClip = `inset(${(cropBoxes.gameplay.y / videoDimensions.h) * 100}% ${(100 - (cropBoxes.gameplay.x + cropBoxes.gameplay.w) / videoDimensions.w * 100)}% ${(100 - (cropBoxes.gameplay.y + cropBoxes.gameplay.h) / videoDimensions.h * 100)}% ${(cropBoxes.gameplay.x / videoDimensions.w) * 100}%)`;
 
   return (
     <div className="space-y-3">
@@ -60,7 +67,7 @@ export function ClipSectionPreviewCrop({
               src={frameUrl(src, frameTime)}
               alt="camera preview"
               className="w-full h-full"
-              style={{ objectFit: "cover", objectPosition: avatarPos }}
+              style={{ objectFit: "cover", objectPosition: avatarPos, clipPath: avatarClip }}
             />
           </div>
         ) : layoutMode === "gameplay_only" ? (
@@ -69,7 +76,7 @@ export function ClipSectionPreviewCrop({
               src={frameUrl(src, frameTime)}
               alt="gameplay preview"
               className="w-full h-full"
-              style={{ objectFit: "cover", objectPosition: gameplayPos }}
+              style={{ objectFit: "cover", objectPosition: gameplayPos, clipPath: gameplayClip }}
             />
           </div>
         ) : (
@@ -79,7 +86,7 @@ export function ClipSectionPreviewCrop({
                 src={frameUrl(src, frameTime)}
                 alt="avatar preview"
                 className="w-full h-full"
-                style={{ objectFit: "cover", objectPosition: avatarPos }}
+                style={{ objectFit: "cover", objectPosition: avatarPos, clipPath: avatarClip }}
               />
             </div>
             <div className="absolute left-0 bottom-0 w-full h-1/2 overflow-hidden bg-[#181825]">
@@ -87,7 +94,7 @@ export function ClipSectionPreviewCrop({
                 src={frameUrl(src, frameTime)}
                 alt="gameplay preview"
                 className="w-full h-full"
-                style={{ objectFit: "cover", objectPosition: gameplayPos }}
+                style={{ objectFit: "cover", objectPosition: gameplayPos, clipPath: gameplayClip }}
               />
             </div>
           </>
@@ -106,7 +113,7 @@ export function ClipSectionPreviewCrop({
       <CropCanvas
         key={canvasKey}
         frameUrl={frameUrl(frameSource, frameAt)}
-        videoDimensions={{ w: 1920, h: 1080 }}
+        videoDimensions={videoDimensions}
         onChange={onCropChange}
         initialGameplay={cropBoxes.gameplay}
         initialAvatar={cropBoxes.avatar}
@@ -124,8 +131,8 @@ export function ClipSectionPreviewCrop({
             checked={layoutMode === "stacked"}
             onChange={() =>
               onLayoutChange("stacked", {
-                gameplay: { x: 0, y: 0, w: 1344, h: 1080 },
-                avatar: { x: 1382, y: 594, w: 518, h: 464 },
+                gameplay: { x: 0, y: 0, w: Math.round(videoDimensions.w * 0.70), h: videoDimensions.h },
+                avatar: { x: Math.round(videoDimensions.w * 0.72), y: Math.round(videoDimensions.h * 0.55), w: Math.round(videoDimensions.w * 0.27), h: Math.round(videoDimensions.h * 0.43) },
               })
             }
             className="accent-[var(--ctp-mauve)]"
@@ -139,7 +146,7 @@ export function ClipSectionPreviewCrop({
             value="camera_only"
             checked={layoutMode === "camera_only"}
             onChange={() => {
-              const box = centeredCropBox9x16(1920, 1080);
+              const box = centeredCropBox9x16(videoDimensions.w, videoDimensions.h);
               onLayoutChange("camera_only", { gameplay: box, avatar: box });
             }}
             className="accent-[var(--ctp-mauve)]"
@@ -153,7 +160,7 @@ export function ClipSectionPreviewCrop({
             value="gameplay_only"
             checked={layoutMode === "gameplay_only"}
             onChange={() => {
-              const box = centeredCropBox9x16(1920, 1080);
+              const box = centeredCropBox9x16(videoDimensions.w, videoDimensions.h);
               onLayoutChange("gameplay_only", { gameplay: box, avatar: box });
             }}
             className="accent-[var(--ctp-mauve)]"

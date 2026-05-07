@@ -40,6 +40,7 @@ interface ClipDetailProps {
   sourcePath: string;
   originalSource: string | null;
   nvencAvailable: boolean;
+  videoDimensions: { w: number; h: number };
   hasImprovedTranscript: boolean;
   improveProgress: { value: number; label: string } | null;
   improveModel: string;
@@ -69,6 +70,7 @@ export function ClipDetail({
   sourcePath,
   originalSource,
   nvencAvailable,
+  videoDimensions,
   hasImprovedTranscript,
   improveProgress,
   improveModel,
@@ -145,6 +147,7 @@ export function ClipDetail({
             segmentPath={cropSegmentPaths[clipKey]}
             refreshing={!!cropRefreshing[clipKey]}
             canvasKey={cropCanvasKey}
+            videoDimensions={videoDimensions}
             onCropChange={onCropChange(clipKey)}
             onRefresh={() => onRefreshCrop(clip, clipKey)}
             onLayoutChange={handleLayoutChange}
