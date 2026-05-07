@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { Stage, Layer, Image as KonvaImage, Rect, Text, Transformer } from 'react-konva'
+import { Stage, Layer, Image as KonvaImage, Rect, Text, Transformer, Group } from 'react-konva'
 import useImage from 'use-image'
 import type Konva from 'konva'
 import type { CropBox } from '../types'
@@ -237,9 +237,10 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   ref={gameplayRef}
                   x={gameplay.x} y={gameplay.y}
                   width={gameplay.width} height={gameplay.height}
-                  fill="rgba(255, 183, 197, 0.15)"
+                  fill="rgba(30, 30, 46, 0.4)"
                   stroke="var(--momiji-sakura)"
                   strokeWidth={selected === 'gameplay' ? 3 : 2}
+                  cornerRadius={8}
                   draggable
                   onClick={() => setSelected('gameplay')}
                   onTap={() => setSelected('gameplay')}
@@ -249,14 +250,26 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   }}
                   onTransformEnd={() => handleTransformEnd('gameplay')}
                 />
-                <Text
-                  x={gameplay.x + 6} y={gameplay.y + 6}
-                  text="🎮 Gameplay"
-                  fontSize={13} fontStyle="bold"
-                  fill="var(--momiji-sakura)"
-                  shadowColor="black" shadowBlur={4} shadowOpacity={0.8}
-                  listening={false}
-                />
+                {/* MacBook-style notch centered at top */}
+                <Group x={gameplay.x + gameplay.width / 2} y={gameplay.y} offsetX={0} offsetY={0}>
+                  {/* Notch background with rounded top corners */}
+                  <Rect
+                    x={-50} y={0}
+                    width={100} height={28}
+                    fill="var(--momiji-sakura)"
+                    cornerRadius={8}
+                    listening={false}
+                  />
+                  {/* Notch text */}
+                  <Text
+                    x={0} y={7}
+                    text="🎮 Gameplay"
+                    fontSize={12} fontStyle="bold"
+                    fill="#1a1a2e"
+                    offsetX={45} offsetY={0}
+                    listening={false}
+                  />
+                </Group>
               </>
             )}
 
@@ -267,9 +280,10 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   ref={avatarRef}
                   x={avatar.x} y={avatar.y}
                   width={avatar.width} height={avatar.height}
-                  fill="rgba(0, 255, 157, 0.15)"
+                  fill="rgba(30, 30, 46, 0.4)"
                   stroke="var(--momiji-neon-green)"
                   strokeWidth={selected === 'avatar' ? 3 : 2}
+                  cornerRadius={8}
                   draggable
                   onClick={() => setSelected('avatar')}
                   onTap={() => setSelected('avatar')}
@@ -279,14 +293,26 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   }}
                   onTransformEnd={() => handleTransformEnd('avatar')}
                 />
-                <Text
-                  x={avatar.x + 6} y={avatar.y + 6}
-                  text="📹 Facecam"
-                  fontSize={13} fontStyle="bold"
-                  fill="var(--momiji-neon-green)"
-                  shadowColor="black" shadowBlur={4} shadowOpacity={0.8}
-                  listening={false}
-                />
+                {/* MacBook-style notch centered at top */}
+                <Group x={avatar.x + avatar.width / 2} y={avatar.y} offsetX={0} offsetY={0}>
+                  {/* Notch background with rounded top corners */}
+                  <Rect
+                    x={-45} y={0}
+                    width={90} height={28}
+                    fill="var(--momiji-neon-green)"
+                    cornerRadius={8}
+                    listening={false}
+                  />
+                  {/* Notch text */}
+                  <Text
+                    x={0} y={7}
+                    text="📹 Facecam"
+                    fontSize={12} fontStyle="bold"
+                    fill="#1a1a2e"
+                    offsetX={38} offsetY={0}
+                    listening={false}
+                  />
+                </Group>
               </>
             )}
 
@@ -403,13 +429,13 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
 
       <div className="flex gap-6 text-xs font-mono">
         {layoutMode !== 'camera_only' && (
-          <span className="crop-label-pill px-2 py-1 rounded-md" style={{ background: 'rgba(255, 183, 197, 0.15)', color: 'var(--momiji-sakura)', border: '1px solid rgba(255, 183, 197, 0.3)' }}>
-            🎮 Gameplay {gpBox.w}×{gpBox.h} @ ({gpBox.x},{gpBox.y})
+          <span className="crop-label-pill px-2 py-1 rounded-md" style={{ background: 'rgba(255, 183, 197, 0.1)', color: 'var(--momiji-sakura)', border: '1px solid rgba(255, 183, 197, 0.2)' }}>
+            Gameplay {gpBox.w}×{gpBox.h}
           </span>
         )}
         {layoutMode !== 'gameplay_only' && (
-          <span className="crop-label-pill px-2 py-1 rounded-md" style={{ background: 'rgba(0, 255, 157, 0.15)', color: 'var(--momiji-neon-green)', border: '1px solid rgba(0, 255, 157, 0.3)' }}>
-            📹 Facecam {avBox.w}×{avBox.h} @ ({avBox.x},{avBox.y})
+          <span className="crop-label-pill px-2 py-1 rounded-md" style={{ background: 'rgba(0, 255, 157, 0.1)', color: 'var(--momiji-neon-green)', border: '1px solid rgba(0, 255, 157, 0.2)' }}>
+            Facecam {avBox.w}×{avBox.h}
           </span>
         )}
       </div>
