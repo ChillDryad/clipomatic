@@ -68,7 +68,7 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
   if (!frameUrl || canvasW <= 0 || canvasH <= 0) {
     return (
       <div className="crop-canvas-wrapper" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
-        <p className="text-xs text-[var(--ctp-subtext)]">
+        <p className="text-xs text-[var(--momiji-subtext)]">
           {!frameUrl ? 'No preview available' : 'Loading preview...'}
         </p>
       </div>
@@ -213,21 +213,21 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
           <Stage
             width={canvasW + CANVAS_PADDING * 2}
             height={canvasH + CANVAS_PADDING * 2}
-            style={{ borderRadius: 8 }}
+            style={{ borderRadius: 12 }}
             onMouseDown={(e) => { if (e.target === e.target.getStage()) setSelected(null) }}
           >
           <Layer>
             {/* Background: source video frame with padding */}
-            <Rect width={canvasW + CANVAS_PADDING * 2} height={canvasH + CANVAS_PADDING * 2} fill="#1e1e2e" listening={false} />
+            <Rect width={canvasW + CANVAS_PADDING * 2} height={canvasH + CANVAS_PADDING * 2} fill="var(--momiji-surface)" listening={false} />
             {imageStatus === 'loaded' && image
               ? <KonvaImage image={image} x={CANVAS_PADDING} y={CANVAS_PADDING} width={canvasW} height={canvasH} listening={false} />
               : null
             }
             {imageStatus === 'loading' && (
-              <Text text="Loading preview..." x={canvasW / 2 + CANVAS_PADDING} y={canvasH / 2 + CANVAS_PADDING} fill="#888" fontSize={14} offsetX={50} offsetY={10} />
+              <Text text="Loading preview..." x={canvasW / 2 + CANVAS_PADDING} y={canvasH / 2 + CANVAS_PADDING} fill="var(--momiji-subtext)" fontSize={14} offsetX={50} offsetY={10} />
             )}
             {imageStatus === 'failed' && (
-              <Text text="Preview unavailable" x={canvasW / 2 + CANVAS_PADDING} y={canvasH / 2 + CANVAS_PADDING} fill="#888" fontSize={14} offsetX={60} offsetY={10} />
+              <Text text="Preview unavailable" x={canvasW / 2 + CANVAS_PADDING} y={canvasH / 2 + CANVAS_PADDING} fill="var(--momiji-subtext)" fontSize={14} offsetX={60} offsetY={10} />
             )}
 
             {/* Gameplay box — hidden in camera_only mode */}
@@ -237,8 +237,8 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   ref={gameplayRef}
                   x={gameplay.x} y={gameplay.y}
                   width={gameplay.width} height={gameplay.height}
-                  fill="rgba(137,180,250,0.12)"
-                  stroke="#89b4fa"
+                  fill="rgba(255, 183, 197, 0.15)"
+                  stroke="var(--momiji-sakura)"
                   strokeWidth={selected === 'gameplay' ? 3 : 2}
                   draggable
                   onClick={() => setSelected('gameplay')}
@@ -251,9 +251,9 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                 />
                 <Text
                   x={gameplay.x + 6} y={gameplay.y + 6}
-                  text="Gameplay"
+                  text="🎮 Gameplay"
                   fontSize={13} fontStyle="bold"
-                  fill="#89b4fa"
+                  fill="var(--momiji-sakura)"
                   shadowColor="black" shadowBlur={4} shadowOpacity={0.8}
                   listening={false}
                 />
@@ -267,8 +267,8 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   ref={avatarRef}
                   x={avatar.x} y={avatar.y}
                   width={avatar.width} height={avatar.height}
-                  fill="rgba(203,166,247,0.12)"
-                  stroke="#cba6f7"
+                  fill="rgba(0, 255, 157, 0.15)"
+                  stroke="var(--momiji-neon-green)"
                   strokeWidth={selected === 'avatar' ? 3 : 2}
                   draggable
                   onClick={() => setSelected('avatar')}
@@ -281,9 +281,9 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                 />
                 <Text
                   x={avatar.x + 6} y={avatar.y + 6}
-                  text="Facecam"
+                  text="📹 Facecam"
                   fontSize={13} fontStyle="bold"
-                  fill="#cba6f7"
+                  fill="var(--momiji-neon-green)"
                   shadowColor="black" shadowBlur={4} shadowOpacity={0.8}
                   listening={false}
                 />
@@ -401,12 +401,16 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
         </div>
       </div>
 
-      <div className="flex gap-6 text-xs text-[var(--ctp-subtext)] font-mono">
+      <div className="flex gap-6 text-xs font-mono">
         {layoutMode !== 'camera_only' && (
-          <span className="crop-label-pill text-[var(--ctp-blue)]">Gameplay {gpBox.w}×{gpBox.h} @ ({gpBox.x},{gpBox.y})</span>
+          <span className="crop-label-pill px-2 py-1 rounded-md" style={{ background: 'rgba(255, 183, 197, 0.15)', color: 'var(--momiji-sakura)', border: '1px solid rgba(255, 183, 197, 0.3)' }}>
+            🎮 Gameplay {gpBox.w}×{gpBox.h} @ ({gpBox.x},{gpBox.y})
+          </span>
         )}
         {layoutMode !== 'gameplay_only' && (
-          <span className="crop-label-pill text-[var(--ctp-mauve)]">Facecam {avBox.w}×{avBox.h} @ ({avBox.x},{avBox.y})</span>
+          <span className="crop-label-pill px-2 py-1 rounded-md" style={{ background: 'rgba(0, 255, 157, 0.15)', color: 'var(--momiji-neon-green)', border: '1px solid rgba(0, 255, 157, 0.3)' }}>
+            📹 Facecam {avBox.w}×{avBox.h} @ ({avBox.x},{avBox.y})
+          </span>
         )}
       </div>
     </div>
