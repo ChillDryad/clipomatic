@@ -41,13 +41,34 @@ export function ClipSectionPreviewCrop({
   const frameAt = segmentPath ? 0 : clipStart;
   const frameTime = clipStart + 2;
 
-  // Calculate crop positions as percentages for object-position
-  const avatarPos = `${((cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoDimensions.w) * 100}% ${((cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoDimensions.h) * 100}%`;
-  const gameplayPos = `${((cropBoxes.gameplay.x + cropBoxes.gameplay.w / 2) / videoDimensions.w) * 100}% ${((cropBoxes.gameplay.y + cropBoxes.gameplay.h / 2) / videoDimensions.h) * 100}%`;
+  // Calculate the crop region as a percentage of the source video
+  const avatarCropPct = {
+    left: (cropBoxes.avatar.x / videoDimensions.w) * 100,
+    top: (cropBoxes.avatar.y / videoDimensions.h) * 100,
+    width: (cropBoxes.avatar.w / videoDimensions.w) * 100,
+    height: (cropBoxes.avatar.h / videoDimensions.h) * 100,
+  };
+  avatarCropPct.right = 100 - avatarCropPct.left - avatarCropPct.width;
+  avatarCropPct.bottom = 100 - avatarCropPct.top - avatarCropPct.height;
+  
+  const gameplayCropPct = {
+    left: (cropBoxes.gameplay.x / videoDimensions.w) * 100,
+    top: (cropBoxes.gameplay.y / videoDimensions.h) * 100,
+    width: (cropBoxes.gameplay.w / videoDimensions.w) * 100,
+    height: (cropBoxes.gameplay.h / videoDimensions.h) * 100,
+  };
+  gameplayCropPct.right = 100 - gameplayCropPct.left - gameplayCropPct.width;
+  gameplayCropPct.bottom = 100 - gameplayCropPct.top - gameplayCropPct.height;
 
-  // Calculate clip-path for proper cropping (shows only the selected region)
-  const avatarClip = `inset(${(cropBoxes.avatar.y / videoDimensions.h) * 100}% ${(100 - (cropBoxes.avatar.x + cropBoxes.avatar.w) / videoDimensions.w * 100)}% ${(100 - (cropBoxes.avatar.y + cropBoxes.avatar.h) / videoDimensions.h * 100)}% ${(cropBoxes.avatar.x / videoDimensions.w) * 100}%)`;
-  const gameplayClip = `inset(${(cropBoxes.gameplay.y / videoDimensions.h) * 100}% ${(100 - (cropBoxes.gameplay.x + cropBoxes.gameplay.w) / videoDimensions.w * 100)}% ${(100 - (cropBoxes.gameplay.y + cropBoxes.gameplay.h) / videoDimensions.h * 100)}% ${(cropBoxes.gameplay.x / videoDimensions.w) * 100}%)`;
+  // Calculate object-position to center the crop region
+  // This positions the image so the center of the crop box aligns with the center of the container
+  const avatarObjPos = `${avatarCropPct.left + avatarCropPct.width / 2}% ${avatarCropPct.top + avatarCropPct.height / 2}%`;
+  const gameplayObjPos = `${gameplayCropPct.left + gameplayCropPct.width / 2}% ${gameplayCropPct.top + gameplayCropPct.height / 2}%`;
+  
+  // Calculate background-size to make the crop region fill the container
+  // If crop is 20% of video width, we need 500% background-size to fill container
+  const avatarBgSize = `${100 / avatarCropPct.width}% ${100 / avatarCropPct.height}%`;
+  const gameplayBgSize = `${100 / gameplayCropPct.width}% ${100 / gameplayCropPct.height}%`;
 
   return (
     <div className="space-y-3">
@@ -67,7 +88,10 @@ export function ClipSectionPreviewCrop({
               src={frameUrl(src, frameTime)}
               alt="camera preview"
               className="w-full h-full"
-              style={{ objectFit: "cover", objectPosition: avatarPos, clipPath: avatarClip }}
+              style={{
+                objectFit: "cover",
+                objectPosition: avatarObjPos,
+              }}
             />
           </div>
         ) : layoutMode === "gameplay_only" ? (
@@ -76,27 +100,32 @@ export function ClipSectionPreviewCrop({
               src={frameUrl(src, frameTime)}
               alt="gameplay preview"
               className="w-full h-full"
-              style={{ objectFit: "cover", objectPosition: gameplayPos, clipPath: gameplayClip }}
+              style={{
+                objectFit: "cover",
+                objectPosition: gameplayObjPos,
+              }}
             />
           </div>
         ) : (
           <>
-            <div className="absolute left-0 top-0 w-full h-1/2 overflow-hidden bg-[#181825]">
-              <img
-                src={frameUrl(src, frameTime)}
-                alt="avatar preview"
-                className="w-full h-full"
-                style={{ objectFit: "cover", objectPosition: avatarPos, clipPath: avatarClip }}
-              />
-            </div>
-            <div className="absolute left-0 bottom-0 w-full h-1/2 overflow-hidden bg-[#181825]">
-              <img
-                src={frameUrl(src, frameTime)}
-                alt="gameplay preview"
-                className="w-full h-full"
-                style={{ objectFit: "cover", objectPosition: gameplayPos, clipPath: gameplayClip }}
-              />
-            </div>
+            {/* Avatar preview (top half) - shows only the avatar crop region stretched to fill */}
+            <div
+              className="absolute left-0 top-0 w-full h-1/2 bg-no-repeat bg-[#181825]"
+              style={{
+                backgroundImage: `url(${frameUrl(src, frameTime)})`,
+                backgroundPosition: avatarObjPos,
+                backgroundSize: avatarBgSize,
+              }}
+            />
+            {/* Gameplay preview (bottom half) - shows only the gameplay crop region stretched to fill */}
+            <div
+              className="absolute left-0 bottom-0 w-full h-1/2 bg-no-repeat bg-[#181825]"
+              style={{
+                backgroundImage: `url(${frameUrl(src, frameTime)})`,
+                backgroundPosition: gameplayObjPos,
+                backgroundSize: gameplayBgSize,
+              }}
+            />
           </>
         )}
         <div
@@ -183,7 +212,7 @@ export function ClipSectionPreviewCrop({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
           )}
-          {refreshing ? "Downloading…" : "Refresh"}
+          {refreshing ? "Downloading..." : "Refresh"}
         </button>
       </div>
     </div>
