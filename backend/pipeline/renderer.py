@@ -126,6 +126,8 @@ def _build_ass_header(
     shadow_with_alpha: str,
     output_width: int,
     output_height: int,
+    alignment: int = 2,
+    margin_v: int = 970,
 ) -> str:
     return f"""[Script Info]
 ScriptType: v4.00+
@@ -135,7 +137,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{font_size},{primary},{secondary},{outline},&H00000000,1,0,0,0,100,100,0,0,1,{outline_width},{shadow_with_alpha},2,20,20,970,1
+Style: Default,{font_name},{font_size},{primary},{secondary},{outline},&H00000000,1,0,0,0,100,100,0,0,1,{outline_width},{shadow_with_alpha},{alignment},20,20,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -153,6 +155,7 @@ def _ass_style_header(
     shadow_opacity: float,
     output_width: int,
     output_height: int,
+    layout_mode: str = "stacked",
 ) -> str:
     """Build the shared ASS header + style block, factoring out duplicated hex conversions."""
     primary = font_color if font_color.startswith("&H") else _hex_to_ass(font_color)
@@ -161,8 +164,19 @@ def _ass_style_header(
     shadow = shadow_color if shadow_color.startswith("&H") else _hex_to_ass(shadow_color)
     shadow_alpha = int(shadow_opacity * 255)
     shadow_with_alpha = f"&H{shadow_alpha:02X}{shadow[3:]}"
+    
+    # Position subtitles in upper 25% for camera_only/gameplay_only modes
+    # For stacked mode, subtitles are at bottom (default)
+    if layout_mode in ("camera_only", "gameplay_only"):
+        alignment = 8  # Top Center
+        margin_v = 50  # 50px from top (upper 25% of 1920px frame)
+    else:
+        alignment = 2  # Bottom Center
+        margin_v = 970  # Default bottom position
+    
     return _build_ass_header(font_name, font_size, primary, secondary, outline,
-                             outline_width, shadow_with_alpha, output_width, output_height)
+                             outline_width, shadow_with_alpha, output_width, output_height,
+                             alignment, margin_v)
 
 
 def _build_ass_word_by_word(
@@ -182,6 +196,7 @@ def _build_ass_word_by_word(
     fade_in_ms: int = 0,
     caption_style: str = "karaoke",
     words_per_line: int = 1,
+    layout_mode: str = "stacked",
 ) -> str:
     """
     Generate an ASS subtitle file with CapCut-style per-word karaoke.
@@ -202,7 +217,7 @@ def _build_ass_word_by_word(
     """
     header = _ass_style_header(font_name, font_size, font_color, highlight_color,
                                outline_color, outline_width, shadow_color, shadow_opacity,
-                               output_width, output_height)
+                               output_width, output_height, layout_mode)
 
     words_out: list[tuple[float, float, str]] = []
     for seg in segments:
@@ -296,7 +311,8 @@ def _build_ass_word_by_word(
                         w_end = w_t1
 
                     pos_x = base_x + start_offset + wi * word_spacing
-                    pos_y = 950  # Just above the avatar section (y=960 in 1920px output)
+                    # Position in upper 25% for camera_only/gameplay_only, otherwise default
+                    pos_y = 50 if layout_mode in ("camera_only", "gameplay_only") else 950
                     word_tag = f"{{\\pos({pos_x},{pos_y})\\c{ass_highlight}}}{w_text}"
 
                     lines.append(
@@ -442,6 +458,7 @@ def render_clip(
         fade_in_ms=subtitle_fade_in_ms,
         caption_style=caption_style,
         words_per_line=words_per_line,
+        layout_mode=layout_mode,
     )
 
     ass_fd, ass_path = tempfile.mkstemp(suffix=".ass")
@@ -685,6 +702,7 @@ def render_timeline(
         fade_in_ms=subtitle_fade_in_ms,
         caption_style=caption_style,
         words_per_line=words_per_line,
+        layout_mode=layout_mode,
     )
 
     ass_fd, ass_path = tempfile.mkstemp(suffix=".ass")
