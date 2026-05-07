@@ -21,6 +21,9 @@ build/
 # Test artifacts
 cov_html/
 .coverage
-frontend/node_modules/*
+
+# Frontend
+frontend/node_modules/
+
 # Docker
 *.log
