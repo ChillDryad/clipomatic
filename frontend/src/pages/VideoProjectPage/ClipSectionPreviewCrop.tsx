@@ -64,16 +64,10 @@ export function ClipSectionPreviewCrop({
   gameplayCropPct.right = 100 - gameplayCropPct.left - gameplayCropPct.width;
   gameplayCropPct.bottom = 100 - gameplayCropPct.top - gameplayCropPct.height;
 
-  // Calculate position and zoom to show only the crop region
+  // Calculate position to center the crop region in the container
   // Position: center of the crop box
   const avatarObjPos = `${avatarCropPct.left + avatarCropPct.width / 2}% ${avatarCropPct.top + avatarCropPct.height / 2}%`;
   const gameplayObjPos = `${gameplayCropPct.left + gameplayCropPct.width / 2}% ${gameplayCropPct.top + gameplayCropPct.height / 2}%`;
-  
-  // Background size: zoom in so the crop fills the container
-  // If crop is 25% of video width, we need 400% to fill width
-  // Height is scaled proportionally to maintain aspect ratio
-  const avatarBgSize = `${100 / avatarCropPct.width}% auto`;
-  const gameplayBgSize = `${100 / gameplayCropPct.width}% auto`;
 
   return (
     <div className="space-y-3">
@@ -113,24 +107,30 @@ export function ClipSectionPreviewCrop({
           </div>
         ) : (
           <>
-            {/* Avatar preview (top half) - zooms in on the avatar crop region */}
-            <div
-              className="absolute left-0 top-0 w-full h-1/2 bg-no-repeat bg-[#181825]"
-              style={{
-                backgroundImage: `url(${frameUrl(src, frameTime)})`,
-                backgroundPosition: avatarObjPos,
-                backgroundSize: avatarBgSize,
-              }}
-            />
-            {/* Gameplay preview (bottom half) - zooms in on the gameplay crop region */}
-            <div
-              className="absolute left-0 bottom-0 w-full h-1/2 bg-no-repeat bg-[#181825]"
-              style={{
-                backgroundImage: `url(${frameUrl(src, frameTime)})`,
-                backgroundPosition: gameplayObjPos,
-                backgroundSize: gameplayBgSize,
-              }}
-            />
+            {/* Avatar preview (top half) */}
+            <div className="absolute left-0 top-0 w-full h-1/2 overflow-hidden bg-[#181825]">
+              <img
+                src={frameUrl(src, frameTime)}
+                alt="avatar preview"
+                className="w-full h-full"
+                style={{
+                  objectFit: 'cover',
+                  objectPosition: avatarObjPos,
+                }}
+              />
+            </div>
+            {/* Gameplay preview (bottom half) */}
+            <div className="absolute left-0 bottom-0 w-full h-1/2 overflow-hidden bg-[#181825]">
+              <img
+                src={frameUrl(src, frameTime)}
+                alt="gameplay preview"
+                className="w-full h-full"
+                style={{
+                  objectFit: 'cover',
+                  objectPosition: gameplayObjPos,
+                }}
+              />
+            </div>
           </>
         )}
         <div

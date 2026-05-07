@@ -237,8 +237,8 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   ref={gameplayRef}
                   x={gameplay.x} y={gameplay.y}
                   width={gameplay.width} height={gameplay.height}
-                  fill="rgba(30, 30, 46, 0.4)"
-                  stroke="var(--momiji-sakura)"
+                  fill="rgba(30, 30, 46, 0.3)"
+                  stroke="#ffb7c5"
                   strokeWidth={selected === 'gameplay' ? 3 : 2}
                   cornerRadius={8}
                   draggable
@@ -256,7 +256,7 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   <Rect
                     x={-50} y={0}
                     width={100} height={28}
-                    fill="var(--momiji-sakura)"
+                    fill="#ffb7c5"
                     cornerRadius={8}
                     listening={false}
                   />
@@ -280,8 +280,8 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   ref={avatarRef}
                   x={avatar.x} y={avatar.y}
                   width={avatar.width} height={avatar.height}
-                  fill="rgba(30, 30, 46, 0.4)"
-                  stroke="var(--momiji-neon-green)"
+                  fill="rgba(30, 30, 46, 0.3)"
+                  stroke="#00ff9d"
                   strokeWidth={selected === 'avatar' ? 3 : 2}
                   cornerRadius={8}
                   draggable
@@ -299,7 +299,7 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
                   <Rect
                     x={-45} y={0}
                     width={90} height={28}
-                    fill="var(--momiji-neon-green)"
+                    fill="#00ff9d"
                     cornerRadius={8}
                     listening={false}
                   />
