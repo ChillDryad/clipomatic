@@ -47,6 +47,8 @@ export function ClipSectionPreviewCrop({
     top: (cropBoxes.avatar.y / videoDimensions.h) * 100,
     width: (cropBoxes.avatar.w / videoDimensions.w) * 100,
     height: (cropBoxes.avatar.h / videoDimensions.h) * 100,
+    right: 0, // will be calculated below
+    bottom: 0, // will be calculated below
   };
   avatarCropPct.right = 100 - avatarCropPct.left - avatarCropPct.width;
   avatarCropPct.bottom = 100 - avatarCropPct.top - avatarCropPct.height;
@@ -56,6 +58,8 @@ export function ClipSectionPreviewCrop({
     top: (cropBoxes.gameplay.y / videoDimensions.h) * 100,
     width: (cropBoxes.gameplay.w / videoDimensions.w) * 100,
     height: (cropBoxes.gameplay.h / videoDimensions.h) * 100,
+    right: 0, // will be calculated below
+    bottom: 0, // will be calculated below
   };
   gameplayCropPct.right = 100 - gameplayCropPct.left - gameplayCropPct.width;
   gameplayCropPct.bottom = 100 - gameplayCropPct.top - gameplayCropPct.height;
