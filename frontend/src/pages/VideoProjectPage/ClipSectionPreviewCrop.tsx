@@ -69,10 +69,20 @@ export function ClipSectionPreviewCrop({
   const avatarObjPos = `${avatarCropPct.left + avatarCropPct.width / 2}% ${avatarCropPct.top + avatarCropPct.height / 2}%`;
   const gameplayObjPos = `${gameplayCropPct.left + gameplayCropPct.width / 2}% ${gameplayCropPct.top + gameplayCropPct.height / 2}%`;
   
-  // Calculate background-size to make the crop region fill the container
-  // If crop is 20% of video width, we need 500% background-size to fill container
-  const avatarBgSize = `${100 / avatarCropPct.width}% ${100 / avatarCropPct.height}%`;
-  const gameplayBgSize = `${100 / gameplayCropPct.width}% ${100 / gameplayCropPct.height}%`;
+  // Calculate uniform scale to make the crop fill the container while maintaining aspect ratio
+  // Container (half of 9:16) has aspect ratio 9:8 = 1.125
+  const containerAspect = 9 / 8;
+  const avatarAspect = cropBoxes.avatar.w / cropBoxes.avatar.h;
+  const gameplayAspect = cropBoxes.gameplay.w / cropBoxes.gameplay.h;
+  
+  // Scale factor: how much to zoom in so the crop fills the container
+  // If crop aspect > container aspect, scale by width; otherwise by height
+  const avatarScale = avatarAspect > containerAspect 
+    ? containerAspect / avatarAspect  // crop is wider, scale by height
+    : 1;  // crop is taller, width already fills
+  const gameplayScale = gameplayAspect > containerAspect
+    ? containerAspect / gameplayAspect
+    : 1;
 
   return (
     <div className="space-y-3">
@@ -112,24 +122,30 @@ export function ClipSectionPreviewCrop({
           </div>
         ) : (
           <>
-            {/* Avatar preview (top half) - shows only the avatar crop region stretched to fill */}
-            <div
-              className="absolute left-0 top-0 w-full h-1/2 bg-no-repeat bg-[#181825]"
-              style={{
-                backgroundImage: `url(${frameUrl(src, frameTime)})`,
-                backgroundPosition: avatarObjPos,
-                backgroundSize: avatarBgSize,
-              }}
-            />
-            {/* Gameplay preview (bottom half) - shows only the gameplay crop region stretched to fill */}
-            <div
-              className="absolute left-0 bottom-0 w-full h-1/2 bg-no-repeat bg-[#181825]"
-              style={{
-                backgroundImage: `url(${frameUrl(src, frameTime)})`,
-                backgroundPosition: gameplayObjPos,
-                backgroundSize: gameplayBgSize,
-              }}
-            />
+            {/* Avatar preview (top half) - shows only the avatar crop region */}
+            <div className="absolute left-0 top-0 w-full h-1/2 overflow-hidden bg-[#181825]">
+              <img
+                src={frameUrl(src, frameTime)}
+                alt="avatar preview"
+                className="w-full h-full"
+                style={{
+                  objectFit: "cover",
+                  objectPosition: avatarObjPos,
+                }}
+              />
+            </div>
+            {/* Gameplay preview (bottom half) - shows only the gameplay crop region */}
+            <div className="absolute left-0 bottom-0 w-full h-1/2 overflow-hidden bg-[#181825]">
+              <img
+                src={frameUrl(src, frameTime)}
+                alt="gameplay preview"
+                className="w-full h-full"
+                style={{
+                  objectFit: "cover",
+                  objectPosition: gameplayObjPos,
+                }}
+              />
+            </div>
           </>
         )}
         <div
