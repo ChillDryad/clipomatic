@@ -411,6 +411,58 @@ export function frameUrl(videoPath: string, t: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Thumbnails
+// ---------------------------------------------------------------------------
+
+export async function uploadProjectThumbnail(
+  projectId: string,
+  file: File,
+): Promise<{ thumbnail_path: string }> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await fetch(`/api/projects/${projectId}/thumbnail`, {
+    method: 'POST',
+    body: formData,
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function deleteProjectThumbnail(projectId: string): Promise<void> {
+  const res = await fetch(`/api/projects/${projectId}/thumbnail`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function autoGenerateProjectThumbnail(
+  projectId: string,
+): Promise<{ thumbnail_path: string }> {
+  const res = await fetch(`/api/projects/${projectId}/thumbnail/auto-generate`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function getThumbnailStatus(
+  projectId: string,
+): Promise<{ has_thumbnail: boolean; thumbnail_path: string | null }> {
+  const res = await fetch(`/api/projects/${projectId}/thumbnail/status`, {
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export function thumbnailUrl(projectId: string): string {
+  return `/api/projects/${projectId}/thumbnail`
+}
+
+// ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
 
@@ -463,11 +515,49 @@ export async function renderClip(
     caption_style: string
     words_per_line: number
     quality_preset: string
+    layout_mode: string
+    thumbnail_path?: string | null
   },
   onProgress: (p: number, label: string) => void,
   signal?: AbortSignal,
 ): Promise<string> {
   const res = await fetch('/api/render/clip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    credentials: 'include',
+    signal,
+  })
+  return consumeSSE<string>(res, onProgress, signal)
+}
+
+export async function renderPreview(
+  params: {
+    video_path: string
+    clip: { start: number; end: number }
+    crop_avatar: { x: number; y: number; w: number; h: number }
+    crop_game: { x: number; y: number; w: number; h: number }
+    segments: unknown[]
+    font_name: string
+    font_color: string
+    highlight_color: string
+    outline_color: string
+    outline_width: number
+    shadow_color: string
+    shadow_depth: number
+    shadow_opacity: number
+    font_size: number
+    subtitle_fade_in_ms: number
+    subtitle_fade_out_ms: number
+    caption_style: string
+    words_per_line: number
+    layout_mode: string
+    thumbnail_path?: string | null
+  },
+  onProgress: (p: number, label: string) => void,
+  signal?: AbortSignal,
+): Promise<string> {
+  const res = await fetch('/api/render/preview', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -726,8 +816,25 @@ export async function getConfig(): Promise<{
   llm_model: string
   whisper_model: string
   whisper_device: string
+  nvenc_available: boolean
 }> {
   const res = await fetch('/api/config', { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function saveConfig(config: {
+  llm_model?: string
+  llm_base_url?: string
+  whisper_model?: string
+  whisper_device?: string
+}): Promise<{ success: boolean }> {
+  const res = await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+    credentials: 'include',
+  })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -985,6 +1092,8 @@ async function consumeSSE<T>(
       return event.result as T
     } else if ('error' in event) {
       throw new Error(event.error)
+    } else if ('redirect' in event) {
+      return event as unknown as T
     }
   }
   throw new Error('SSE stream ended without a done event')
@@ -1124,6 +1233,14 @@ export async function getProjectClips(projectId: string): Promise<ProjectClip[]>
   if (!res.ok) throw new Error(await res.text())
   const data = await res.json()
   return data.clips || data
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  const res = await fetch(`/api/projects/${projectId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
 }
 
 export async function addClipsToProject(

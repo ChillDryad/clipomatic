@@ -17,9 +17,10 @@ services:
       - WORKSPACE_DIR=/app/workspace
       - WHISPER_MODEL=${WHISPER_MODEL:-large-v3}
       - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
-      - LLM_BASE_URL=http://ollama-shared:11434/v1
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://momiji-ollama-shared:11434/v1}
       - LLM_API_KEY=${LLM_API_KEY:-ollama}
       - LLM_MODEL=${LLM_MODEL:-llama3}
+      - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
     volumes:

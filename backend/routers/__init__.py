@@ -30,6 +30,7 @@ from routers.markers import router as markers_router
 from routers.timeline import router as timeline_router, render_router
 from routers.oauth import router as oauth_router
 from routers.teams import router as teams_router
+from routers.thumbnails import router as thumbnails_router
 
 __all__ = [
     "config_router",
@@ -46,4 +47,5 @@ __all__ = [
     "render_router",
     "oauth_router",
     "teams_router",
+    "thumbnails_router",
 ]

@@ -24,10 +24,16 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # P1 Task #6: Move SQLite database to ./data/ directory
 # Ensure data/*.db is in .gitignore for security
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "sqlite+aiosqlite:///./data/momiji.db",  # default: local SQLite in data/ directory
-)
+try:
+    DATABASE_URL = os.environ["DATABASE_URL"]
+except KeyError:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is not set. "
+        "Create a .env file (see .env.example) or set it in your environment.\n"
+        "Examples:\n"
+        "  SQLite:  DATABASE_URL=sqlite+aiosqlite:///./data/momiji.db\n"
+        "  PostgreSQL: DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/momiji"
+    ) from None
 
 # Create data directory if it doesn't exist (for SQLite database)
 if DATABASE_URL.startswith("sqlite"):
@@ -102,9 +108,35 @@ get_session_cm = SessionContextManager
 
 
 async def init_db() -> None:
-    """Create all tables. Safe to call multiple times (idempotent)."""
+    """Create all tables and apply migrations. Safe to call multiple times (idempotent)."""
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Migration: add crop_avatar / crop_game columns to generated_clips
+    try:
+        async with _engine.begin() as conn:
+            await conn.exec_driver_sql(
+                "ALTER TABLE generated_clips ADD COLUMN crop_avatar TEXT"
+            )
+    except Exception:
+        pass  # Column already exists
+
+    try:
+        async with _engine.begin() as conn:
+            await conn.exec_driver_sql(
+                "ALTER TABLE generated_clips ADD COLUMN crop_game TEXT"
+            )
+    except Exception:
+        pass  # Column already exists
+
+    # Migration: add thumbnail_path column to video_projects
+    try:
+        async with _engine.begin() as conn:
+            await conn.exec_driver_sql(
+                "ALTER TABLE video_projects ADD COLUMN thumbnail_path TEXT"
+            )
+    except Exception:
+        pass  # Column already exists
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +423,7 @@ class VideoProject(Base):
     original_filename: Mapped[str] = mapped_column(String, nullable=False)
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String, default="pending")  # pending, processing, complete, failed
+    thumbnail_path: Mapped[str | None] = mapped_column(String, nullable=True)  # path to user-uploaded or auto-generated thumbnail image
     created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
     updated_at: Mapped[float] = mapped_column(Float, default=lambda: time.time(), onupdate=lambda: time.time())
 
@@ -422,6 +455,8 @@ class GeneratedClip(Base):
     brand_alignment: Mapped[str | None] = mapped_column(Text, nullable=True)
     hashtags: Mapped[str | None] = mapped_column(Text, nullable=True)
     render_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    crop_avatar: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON CropBox
+    crop_game: Mapped[str | None] = mapped_column(Text, nullable=True)    # JSON CropBox
     created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
     updated_at: Mapped[float] = mapped_column(Float, default=lambda: time.time(), onupdate=lambda: time.time())
 

@@ -173,6 +173,8 @@ os.makedirs(WORKSPACE, exist_ok=True)
 os.makedirs(os.path.join(WORKSPACE, "audio"), exist_ok=True)
 os.makedirs(os.path.join(WORKSPACE, "frames"), exist_ok=True)
 os.makedirs(os.path.join(WORKSPACE, "renders"), exist_ok=True)
+os.makedirs(os.path.join(WORKSPACE, "thumbnails"), exist_ok=True)
+os.makedirs(os.path.join(WORKSPACE, "previews"), exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +236,7 @@ from routers import (
     render_router,
     oauth_router,
     teams_router,
+    thumbnails_router,
 )
 
 app.include_router(config_router)
@@ -250,6 +253,7 @@ app.include_router(timeline_router)
 app.include_router(render_router)
 app.include_router(oauth_router)
 app.include_router(teams_router)
+app.include_router(thumbnails_router)
 
 
 # ---------------------------------------------------------------------------

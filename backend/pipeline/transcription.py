@@ -287,9 +287,10 @@ def transcript_to_text(transcript: dict) -> str:
     lines = []
     for seg in transcript.get("segments", []):
         start = seg["start"]
-        mins = int(start // 60)
+        hours = int(start // 3600)
+        mins = int((start % 3600) // 60)
         secs = start % 60
-        lines.append(f"[{mins:02d}:{secs:05.2f}] {seg['text']}")
+        lines.append(f"[{hours}:{mins:02d}:{secs:05.2f}] {seg['text']}")
     return "\n".join(lines)
 
 

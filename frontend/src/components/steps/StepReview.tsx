@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { downloadSegment, renderClip, updateClipMetadata, regenerateClipMetadata, generatePostDescription, transcribeSegment, getAbortController, cancelOperation, type PlatformAccount } from '../../api'
-import { CropCanvas } from '../CropCanvas'
+import { CropCanvas, centeredCropBox9x16 } from '../CropCanvas'
 import { ProgressBar } from '../ui/ProgressBar'
 import { ScheduleModal } from '../ScheduleModal'
 import { PlatformAccounts } from '../PlatformAccounts'
@@ -124,6 +124,7 @@ function ClipCard({
   const [captionStyle, setCaptionStyle] = useState("capcut")
   const [wordsPerLine, setWordsPerLine] = useState(1)
   const [qualityPreset, setQualityPreset] = useState("standard")
+  const [layoutMode, setLayoutMode] = useState("stacked")
   const [videoDims, setVideoDims] = useState<{ w: number; h: number }>({ w: 1920, h: 1080 })
   const [cropBoxes, setCropBoxes] = useState<{ gameplay: CropBox; avatar: CropBox }>({
     gameplay: { x: 0, y: 0, w: 1344, h: 1080 },
@@ -285,6 +286,19 @@ function ClipCard({
     setCropBoxes({ gameplay, avatar })
   }, [])
 
+  // Update crop boxes when layout mode changes
+  useEffect(() => {
+    if (layoutMode === "camera_only" || layoutMode === "gameplay_only") {
+      const box = centeredCropBox9x16(videoDims.w, videoDims.h)
+      setCropBoxes({ gameplay: box, avatar: box })
+    } else {
+      setCropBoxes({
+        gameplay: { x: 0, y: 0, w: 1344, h: 1080 },
+        avatar: { x: 1382, y: 594, w: 518, h: 464 },
+      })
+    }
+  }, [layoutMode, videoDims.w, videoDims.h])
+
   const handleRenderCancel = () => {
     setIsCancellingRender(true)
     cancelOperation('render')
@@ -346,6 +360,7 @@ function ClipCard({
             caption_style: captionStyle,
             words_per_line: wordsPerLine,
             quality_preset: qualityPreset,
+            layout_mode: layoutMode,
           },
           (value, label) => setRenderProgress({ value: 0.4 + value * 0.6, label }),
           controller.signal,
@@ -382,6 +397,7 @@ function ClipCard({
             caption_style: captionStyle,
             words_per_line: wordsPerLine,
             quality_preset: qualityPreset,
+            layout_mode: layoutMode,
           },
           (value, label) => setRenderProgress({ value, label }),
           controller.signal,
@@ -621,12 +637,24 @@ function ClipCard({
           {expandedSections.preview && (
             <div className="p-3 space-y-2">
               <div className="relative mx-auto overflow-hidden rounded-lg border-2 border-[var(--ctp-mauve)] shadow-xl" style={{ width: '100%', maxWidth: 270, aspectRatio: '9/16', background: '#181825' }}>
-                <div className="absolute left-0 top-0 w-full h-1/2 overflow-hidden bg-[#181825]">
-                  <img src={previewFrameUrl} alt="avatar preview" className="w-full h-full" style={{ objectFit: 'cover', objectPosition: `${(cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoW * 100}% ${(cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoH * 100}%`, transform: `scale(${avatarZoom})`, transformOrigin: `${(cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoW * 100}% ${(cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoH * 100}%` }} onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.parentElement?.style.setProperty('background', '#333') }} />
-                </div>
-                <div className="absolute left-0 bottom-0 w-full h-1/2 overflow-hidden bg-[#181825]">
-                  <img src={previewFrameUrl} alt="gameplay preview" className="w-full h-full" style={{ objectFit: 'cover', objectPosition: `${(cropBoxes.gameplay.x + cropBoxes.gameplay.w / 2) / videoW * 100}% ${(cropBoxes.gameplay.y + cropBoxes.gameplay.h / 2) / videoH * 100}%` }} onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.parentElement?.style.setProperty('background', '#333') }} />
-                </div>
+                {layoutMode === "camera_only" ? (
+                  <div className="absolute inset-0 overflow-hidden bg-[#181825]">
+                    <img src={previewFrameUrl} alt="camera preview" className="w-full h-full" style={{ objectFit: 'cover', objectPosition: `${(cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoW * 100}% ${(cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoH * 100}%`, transform: `scale(${avatarZoom})`, transformOrigin: `${(cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoW * 100}% ${(cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoH * 100}%` }} onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.parentElement?.style.setProperty('background', '#333') }} />
+                  </div>
+                ) : layoutMode === "gameplay_only" ? (
+                  <div className="absolute inset-0 overflow-hidden bg-[#181825]">
+                    <img src={previewFrameUrl} alt="gameplay preview" className="w-full h-full" style={{ objectFit: 'cover', objectPosition: `${(cropBoxes.gameplay.x + cropBoxes.gameplay.w / 2) / videoW * 100}% ${(cropBoxes.gameplay.y + cropBoxes.gameplay.h / 2) / videoH * 100}%` }} onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.parentElement?.style.setProperty('background', '#333') }} />
+                  </div>
+                ) : (
+                  <>
+                    <div className="absolute left-0 top-0 w-full h-1/2 overflow-hidden bg-[#181825]">
+                      <img src={previewFrameUrl} alt="avatar preview" className="w-full h-full" style={{ objectFit: 'cover', objectPosition: `${(cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoW * 100}% ${(cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoH * 100}%`, transform: `scale(${avatarZoom})`, transformOrigin: `${(cropBoxes.avatar.x + cropBoxes.avatar.w / 2) / videoW * 100}% ${(cropBoxes.avatar.y + cropBoxes.avatar.h / 2) / videoH * 100}%` }} onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.parentElement?.style.setProperty('background', '#333') }} />
+                    </div>
+                    <div className="absolute left-0 bottom-0 w-full h-1/2 overflow-hidden bg-[#181825]">
+                      <img src={previewFrameUrl} alt="gameplay preview" className="w-full h-full" style={{ objectFit: 'cover', objectPosition: `${(cropBoxes.gameplay.x + cropBoxes.gameplay.w / 2) / videoW * 100}% ${(cropBoxes.gameplay.y + cropBoxes.gameplay.h / 2) / videoH * 100}%` }} onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.parentElement?.style.setProperty('background', '#333') }} />
+                    </div>
+                  </>
+                )}
                 <div className="absolute left-0 right-0 bottom-0 flex items-center justify-center px-3 py-2 pointer-events-none" style={{ background: 'rgba(0,0,0,0.6)', height: '12%' }}>
                   <span className="text-[10px] text-white font-medium truncate">{clip.title}</span>
                 </div>
@@ -648,7 +676,7 @@ function ClipCard({
           </button>
           {expandedSections.crops && (
             <div className="p-3 space-y-2">
-              <CropCanvas frameUrl={previewFrameUrl} videoDimensions={videoDims} onChange={handleCropChange} />
+              <CropCanvas frameUrl={previewFrameUrl} videoDimensions={videoDims} onChange={handleCropChange} layoutMode={layoutMode} />
             </div>
           )}
         </div>
@@ -838,6 +866,25 @@ function ClipCard({
                 <p className="text-xs text-[var(--ctp-red)] font-mono whitespace-pre-wrap">{error}</p>
               </div>
             )}
+
+            {/* Layout mode selector */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">Layout</p>
+              <div className="flex gap-3">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name={`layout-${idx}`} value="stacked" checked={layoutMode === "stacked"} onChange={() => setLayoutMode("stacked")} className="accent-[var(--ctp-mauve)]" />
+                  <span className="text-xs text-[var(--ctp-text)]">Stacked</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name={`layout-${idx}`} value="camera_only" checked={layoutMode === "camera_only"} onChange={() => setLayoutMode("camera_only")} className="accent-[var(--ctp-mauve)]" />
+                  <span className="text-xs text-[var(--ctp-text)]">Camera Only</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name={`layout-${idx}`} value="gameplay_only" checked={layoutMode === "gameplay_only"} onChange={() => setLayoutMode("gameplay_only")} className="accent-[var(--ctp-mauve)]" />
+                  <span className="text-xs text-[var(--ctp-text)]">Game Only</span>
+                </label>
+              </div>
+            </div>
 
             <div className="flex gap-3">
               <button

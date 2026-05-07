@@ -4,6 +4,19 @@ import useImage from 'use-image'
 import type Konva from 'konva'
 import type { CropBox } from '../types'
 
+/** Compute a 9:16 centered crop box from source video dimensions. */
+export function centeredCropBox9x16(videoW: number, videoH: number): CropBox {
+  let cropH = videoH
+  let cropW = Math.round(cropH * 9 / 16)
+  if (cropW > videoW) {
+    cropW = videoW
+    cropH = Math.round(cropW * 16 / 9)
+  }
+  const x = Math.round((videoW - cropW) / 2)
+  const y = Math.round((videoH - cropH) / 2)
+  return { x, y, w: cropW, h: cropH }
+}
+
 // Maximum canvas display size - scale video to fit within 1280x720
 const MAX_CANVAS_W = 1280
 const MAX_CANVAS_H = 720
@@ -22,9 +35,11 @@ interface Props {
   initialGameplay?: CropBox
   initialAvatar?: CropBox
   onChange: (gameplay: CropBox, avatar: CropBox) => void
+  layoutMode?: string
+  title?: string
 }
 
-export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initialAvatar, onChange }: Props) {
+export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initialAvatar, onChange, layoutMode, title }: Props) {
   // No crossOrigin param — avoids CORS preflight that blocks same-origin proxied images
   const [image, imageStatus] = useImage(frameUrl || '', 'anonymous')
 
@@ -46,6 +61,9 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
   // Calculate scale factor from source to canvas
   const sourceScale = canvasW / videoDimensions.w
 
+  const isSingleMode = layoutMode === "camera_only" || layoutMode === "gameplay_only"
+  const lockedRatio = isSingleMode ? 9 / 16 : undefined
+
   // Don't render canvas if no image or invalid dimensions
   if (!frameUrl || canvasW <= 0 || canvasH <= 0) {
     return (
@@ -58,14 +76,25 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
   }
 
   // Default crop boxes (source coordinates scaled to canvas)
-  // Gameplay: left 70% of source, full height
-  // Avatar: right 27% of source, centered vertically
-  const defaultGameplay: RectState = initialGameplay
+  // Stacked: Gameplay left 70%, Avatar right 27% — these NEVER change
+  // Single mode: 9:16 crop centered in the frame
+  const stackedGameplay: RectState = initialGameplay
     ? { x: initialGameplay.x * sourceScale, y: initialGameplay.y * sourceScale, width: initialGameplay.w * sourceScale, height: initialGameplay.h * sourceScale }
     : { x: 0, y: 0, width: Math.round(canvasW * 0.70), height: canvasH }
-  const defaultAvatar: RectState = initialAvatar
+  const stackedAvatar: RectState = initialAvatar
     ? { x: initialAvatar.x * sourceScale, y: initialAvatar.y * sourceScale, width: initialAvatar.w * sourceScale, height: initialAvatar.h * sourceScale }
     : { x: Math.round(canvasW * 0.72), y: Math.round(canvasH * 0.55), width: Math.round(canvasW * 0.27), height: Math.round(canvasH * 0.43) }
+
+  const singleDefaultSrc = centeredCropBox9x16(videoDimensions.w, videoDimensions.h)
+  const singleDefault: RectState = {
+    x: singleDefaultSrc.x * sourceScale,
+    y: singleDefaultSrc.y * sourceScale,
+    width: singleDefaultSrc.w * sourceScale,
+    height: singleDefaultSrc.h * sourceScale,
+  }
+
+  const defaultGameplay: RectState = isSingleMode ? singleDefault : stackedGameplay
+  const defaultAvatar: RectState = isSingleMode ? singleDefault : stackedAvatar
 
   const [gameplay, setGameplay] = useState<RectState>(defaultGameplay)
   const [avatar, setAvatar] = useState<RectState>(defaultAvatar)
@@ -76,7 +105,13 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
   const transformerRef = useRef<Konva.Transformer>(null)
 
   const initialized = useRef(false)
-  // Sync initial crop values when first set by parent
+  const prevLayoutMode = useRef(layoutMode)
+  // Re-sync when layout mode changes
+  if (prevLayoutMode.current !== layoutMode) {
+    prevLayoutMode.current = layoutMode
+    initialized.current = false
+  }
+  // Sync initial crop values when first set by parent or when mode changes
   useEffect(() => {
     if (initialized.current) return
     if (initialGameplay) {
@@ -126,14 +161,35 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
     const scaleY = ref.scaleY()
     ref.scaleX(1)
     ref.scaleY(1)
-    const next: RectState = {
-      x: ref.x(),
-      y: ref.y(),
-      width: Math.max(20, ref.width() * scaleX),
-      height: Math.max(20, ref.height() * scaleY),
+    let nextW = Math.max(20, ref.width() * scaleX)
+    let nextH = Math.max(20, ref.height() * scaleY)
+    let nextX = ref.x()
+    let nextY = ref.y()
+
+    // Enforce locked aspect ratio for single-rect modes
+    if (lockedRatio !== undefined) {
+      const cx = nextX + nextW / 2
+      const cy = nextY + nextH / 2
+      nextH = Math.max(20, nextH)
+      nextW = nextH * lockedRatio
+      // Clamp to canvas bounds
+      if (nextW > canvasW) {
+        nextW = canvasW
+        nextH = nextW / lockedRatio
+      }
+      if (nextH > canvasH) {
+        nextH = canvasH
+        nextW = nextH * lockedRatio
+      }
+      nextX = cx - nextW / 2
+      nextY = cy - nextH / 2
+      nextX = Math.max(0, Math.min(nextX, canvasW - nextW))
+      nextY = Math.max(0, Math.min(nextY, canvasH - nextH))
     }
-    if (target === 'gameplay') { setGameplay(next); notify(next, avatar) }
-    else { setAvatar(next); notify(gameplay, next) }
+
+    const nextRect: RectState = { x: nextX, y: nextY, width: nextW, height: nextH }
+    if (target === 'gameplay') { setGameplay(nextRect); notify(nextRect, avatar) }
+    else { setAvatar(nextRect); notify(gameplay, nextRect) }
   }
 
   const gpBox = toBox(gameplay)
@@ -174,64 +230,171 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
               <Text text="Preview unavailable" x={canvasW / 2 + CANVAS_PADDING} y={canvasH / 2 + CANVAS_PADDING} fill="#888" fontSize={14} offsetX={60} offsetY={10} />
             )}
 
-            {/* Gameplay box */}
-            <Rect
-              ref={gameplayRef}
-              x={gameplay.x} y={gameplay.y}
-              width={gameplay.width} height={gameplay.height}
-              fill="rgba(137,180,250,0.12)"
-              stroke="#89b4fa"
-              strokeWidth={selected === 'gameplay' ? 3 : 2}
-              draggable
-              onClick={() => setSelected('gameplay')}
-              onTap={() => setSelected('gameplay')}
-              onDragEnd={(e) => {
-                const next = { ...gameplay, x: e.target.x(), y: e.target.y() }
-                setGameplay(next); notify(next, avatar)
-              }}
-              onTransformEnd={() => handleTransformEnd('gameplay')}
-            />
-            <Text
-              x={gameplay.x + 6} y={gameplay.y + 6}
-              text="Gameplay"
-              fontSize={13} fontStyle="bold"
-              fill="#89b4fa"
-              shadowColor="black" shadowBlur={4} shadowOpacity={0.8}
-              listening={false}
-            />
+            {/* Gameplay box — hidden in camera_only mode */}
+            {layoutMode !== 'camera_only' && (
+              <>
+                <Rect
+                  ref={gameplayRef}
+                  x={gameplay.x} y={gameplay.y}
+                  width={gameplay.width} height={gameplay.height}
+                  fill="rgba(137,180,250,0.12)"
+                  stroke="#89b4fa"
+                  strokeWidth={selected === 'gameplay' ? 3 : 2}
+                  draggable
+                  onClick={() => setSelected('gameplay')}
+                  onTap={() => setSelected('gameplay')}
+                  onDragEnd={(e) => {
+                    const next = { ...gameplay, x: e.target.x(), y: e.target.y() }
+                    setGameplay(next); notify(next, avatar)
+                  }}
+                  onTransformEnd={() => handleTransformEnd('gameplay')}
+                />
+                <Text
+                  x={gameplay.x + 6} y={gameplay.y + 6}
+                  text="Gameplay"
+                  fontSize={13} fontStyle="bold"
+                  fill="#89b4fa"
+                  shadowColor="black" shadowBlur={4} shadowOpacity={0.8}
+                  listening={false}
+                />
+              </>
+            )}
 
-            {/* Avatar / facecam box */}
-            <Rect
-              ref={avatarRef}
-              x={avatar.x} y={avatar.y}
-              width={avatar.width} height={avatar.height}
-              fill="rgba(203,166,247,0.12)"
-              stroke="#cba6f7"
-              strokeWidth={selected === 'avatar' ? 3 : 2}
-              draggable
-              onClick={() => setSelected('avatar')}
-              onTap={() => setSelected('avatar')}
-              onDragEnd={(e) => {
-                const next = { ...avatar, x: e.target.x(), y: e.target.y() }
-                setAvatar(next); notify(gameplay, next)
-              }}
-              onTransformEnd={() => handleTransformEnd('avatar')}
-            />
-            <Text
-              x={avatar.x + 6} y={avatar.y + 6}
-              text="Facecam"
-              fontSize={13} fontStyle="bold"
-              fill="#cba6f7"
-              shadowColor="black" shadowBlur={4} shadowOpacity={0.8}
-              listening={false}
-            />
+            {/* Avatar / facecam box — hidden in gameplay_only mode */}
+            {layoutMode !== 'gameplay_only' && (
+              <>
+                <Rect
+                  ref={avatarRef}
+                  x={avatar.x} y={avatar.y}
+                  width={avatar.width} height={avatar.height}
+                  fill="rgba(203,166,247,0.12)"
+                  stroke="#cba6f7"
+                  strokeWidth={selected === 'avatar' ? 3 : 2}
+                  draggable
+                  onClick={() => setSelected('avatar')}
+                  onTap={() => setSelected('avatar')}
+                  onDragEnd={(e) => {
+                    const next = { ...avatar, x: e.target.x(), y: e.target.y() }
+                    setAvatar(next); notify(gameplay, next)
+                  }}
+                  onTransformEnd={() => handleTransformEnd('avatar')}
+                />
+                <Text
+                  x={avatar.x + 6} y={avatar.y + 6}
+                  text="Facecam"
+                  fontSize={13} fontStyle="bold"
+                  fill="#cba6f7"
+                  shadowColor="black" shadowBlur={4} shadowOpacity={0.8}
+                  listening={false}
+                />
+              </>
+            )}
+
+            {/* UI overlay for single-rect modes: title bar (bottom 12%) + social column stacked on top (45% height, 50px wide) */}
+            {isSingleMode && (() => {
+              const box = layoutMode === 'camera_only' ? avatar : gameplay
+              const titleBarH = box.height * 0.12
+              const titleBarY = box.y + box.height - titleBarH
+              const socialW = 50
+              const socialH = box.height * 0.45
+              const socialY = titleBarY - socialH
+              const iconSize = Math.max(14, Math.min(20, socialH * 0.06))
+              const textFontSize = Math.max(9, Math.min(11, socialH * 0.04))
+              const itemH = socialH / 3
+              return (
+                <>
+                  {/* Social column stacked on top of title bar (right side) */}
+                  <Rect
+                    x={box.x + box.width - socialW} y={socialY}
+                    width={socialW} height={socialH}
+                    fill="rgba(0,0,0,0.35)"
+                    listening={false}
+                  />
+                  {/* Like - top third */}
+                  <Text
+                    x={box.x + box.width - socialW + socialW * 0.5} y={socialY + itemH * 0.35}
+                    text="♥"
+                    fontSize={iconSize}
+                    fill="rgba(255,255,255,0.85)"
+                    align="center"
+                    listening={false}
+                  />
+                  <Text
+                    x={box.x + box.width - socialW + socialW * 0.5} y={socialY + itemH * 0.65}
+                    text="12K"
+                    fontSize={textFontSize}
+                    fill="rgba(255,255,255,0.65)"
+                    align="center"
+                    listening={false}
+                  />
+                  {/* Comment - middle third */}
+                  <Text
+                    x={box.x + box.width - socialW + socialW * 0.5} y={socialY + itemH * 1.35}
+                    text="💬"
+                    fontSize={iconSize}
+                    fill="rgba(255,255,255,0.85)"
+                    align="center"
+                    listening={false}
+                  />
+                  <Text
+                    x={box.x + box.width - socialW + socialW * 0.5} y={socialY + itemH * 1.65}
+                    text="342"
+                    fontSize={textFontSize}
+                    fill="rgba(255,255,255,0.65)"
+                    align="center"
+                    listening={false}
+                  />
+                  {/* Share - bottom third */}
+                  <Text
+                    x={box.x + box.width - socialW + socialW * 0.5} y={socialY + itemH * 2.35}
+                    text="↗"
+                    fontSize={iconSize}
+                    fill="rgba(255,255,255,0.85)"
+                    align="center"
+                    listening={false}
+                  />
+                  <Text
+                    x={box.x + box.width - socialW + socialW * 0.5} y={socialY + itemH * 2.65}
+                    text="Share"
+                    fontSize={textFontSize}
+                    fill="rgba(255,255,255,0.65)"
+                    align="center"
+                    listening={false}
+                  />
+                  {/* Title bar at bottom (12%, full width) */}
+                  <Rect
+                    x={box.x} y={titleBarY}
+                    width={box.width} height={titleBarH}
+                    fill="rgba(0,0,0,0.45)"
+                    stroke="rgba(255,255,255,0.2)"
+                    strokeWidth={1}
+                    dash={[6, 4]}
+                    listening={false}
+                  />
+                  {/* Title text */}
+                  <Text
+                    x={box.x + 8} y={titleBarY + titleBarH * 0.35}
+                    width={box.width - 16}
+                    text={title || "Clip title"}
+                    fontSize={Math.max(8, Math.min(14, titleBarH * 0.45))}
+                    fill="rgba(255,255,255,0.75)"
+                    listening={false}
+                  />
+                </>
+              )
+            })()}
 
             <Transformer
               ref={transformerRef}
               rotateEnabled={false}
-              boundBoxFunc={(old, next) =>
-                next.width < 20 || next.height < 20 ? old : next
-              }
+              boundBoxFunc={(old, next) => {
+                if (next.width < 20 || next.height < 20) return old
+                if (lockedRatio !== undefined) {
+                  const snappedW = Math.max(20, Math.min(next.height * lockedRatio, canvasW))
+                  return { ...next, width: snappedW }
+                }
+                return next
+              }}
             />
           </Layer>
         </Stage>
@@ -239,8 +402,12 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
       </div>
 
       <div className="flex gap-6 text-xs text-[var(--ctp-subtext)] font-mono">
-        <span className="crop-label-pill text-[var(--ctp-blue)]">Gameplay {gpBox.w}×{gpBox.h} @ ({gpBox.x},{gpBox.y})</span>
-        <span className="crop-label-pill text-[var(--ctp-mauve)]">Facecam {avBox.w}×{avBox.h} @ ({avBox.x},{avBox.y})</span>
+        {layoutMode !== 'camera_only' && (
+          <span className="crop-label-pill text-[var(--ctp-blue)]">Gameplay {gpBox.w}×{gpBox.h} @ ({gpBox.x},{gpBox.y})</span>
+        )}
+        {layoutMode !== 'gameplay_only' && (
+          <span className="crop-label-pill text-[var(--ctp-mauve)]">Facecam {avBox.w}×{avBox.h} @ ({avBox.x},{avBox.y})</span>
+        )}
       </div>
     </div>
   )

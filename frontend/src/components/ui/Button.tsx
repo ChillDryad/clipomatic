@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success' | 'warning'
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success' | 'warning' | 'momiji-primary' | 'momiji-neon'
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -19,6 +19,8 @@ const variantClasses: Record<ButtonVariant, string> = {
   danger: 'btn-danger',
   success: 'bg-[var(--ctp-green)] text-[var(--ctp-base)] hover:bg-[var(--ctp-green)]/90 disabled:bg-[var(--ctp-green)]/50',
   warning: 'bg-[var(--ctp-yellow)] text-[var(--ctp-base)] hover:bg-[var(--ctp-yellow)]/90 disabled:bg-[var(--ctp-yellow)]/50',
+  'momiji-primary': 'btn-momiji-primary',
+  'momiji-neon': 'btn-momiji-neon',
 }
 
 const sizeClasses: Record<ButtonSize, string> = {

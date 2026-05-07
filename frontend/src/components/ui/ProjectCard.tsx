@@ -14,6 +14,9 @@ interface ProjectCardProps {
   teamName?: string
   className?: string
   onClick?: React.MouseEventHandler<HTMLAnchorElement>
+  showGradientOverlay?: boolean
+  zoomIntensity?: 'sm' | 'md' | 'lg'
+  renderStatus?: (status: ProjectCardProps['status']) => React.ReactNode
 }
 
 export function ProjectCard({
@@ -27,6 +30,9 @@ export function ProjectCard({
   teamName,
   className = '',
   onClick,
+  showGradientOverlay = false,
+  zoomIntensity = 'sm',
+  renderStatus,
 }: ProjectCardProps) {
   const formattedDate = new Date(createdAt * 1000).toLocaleDateString('en-US', {
     month: 'short',
@@ -35,6 +41,8 @@ export function ProjectCard({
   })
 
   const formattedDuration = duration ? formatDuration(duration) : null
+  const zoomClass =
+    zoomIntensity === 'lg' ? 'group-hover:scale-110' : 'group-hover:scale-105'
 
   return (
     <Link
@@ -48,7 +56,7 @@ export function ProjectCard({
           <img
             src={thumbnailUrl}
             alt={title}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            className={`w-full h-full object-cover ${zoomClass} transition-transform duration-500`}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
@@ -68,6 +76,11 @@ export function ProjectCard({
           </div>
         )}
 
+        {/* Gradient overlay */}
+        {showGradientOverlay && (
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+        )}
+
         {/* Duration overlay */}
         {formattedDuration && (
           <div className="absolute bottom-2 right-2 px-2 py-1 rounded text-[10px] font-medium bg-[var(--ctp-base)]/90 text-[var(--ctp-text)]">
@@ -77,7 +90,7 @@ export function ProjectCard({
 
         {/* Status indicator */}
         <div className="absolute top-2 left-2">
-          <ClipStatusBadge status={status} size="sm" />
+          {renderStatus ? renderStatus(status) : <ClipStatusBadge status={status} size="sm" />}
         </div>
       </div>
 

@@ -44,8 +44,8 @@ async def highlights(req: HighlightsRequest):
     async def _generate():
         completed = False
         detected_clips = []
-        # Timeout per chunk: 2 minutes (120s) for Gemma4, adjust based on hardware
-        timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "120"))
+        # Timeout per chunk: 5 minutes (300s) default, adjust based on hardware
+        timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "300"))
         # Fallback model when primary times out (smaller = faster)
         fallback_model = os.environ.get("HIGHLIGHT_FALLBACK_MODEL", "phi3:mini")
         async for event_str in _sse_stream(
@@ -82,6 +82,12 @@ async def highlights(req: HighlightsRequest):
                 project = result.scalar_one_or_none()
                 if project:
                     project.status = "completed"
+                    # Delete existing clips before writing (prevent duplicates)
+                    existing = await session.execute(
+                        select(GeneratedClip).where(GeneratedClip.project_id == req.project_id)
+                    )
+                    for old_clip in existing.scalars().all():
+                        await session.delete(old_clip)
                     # Write clips to GeneratedClip table
                     for idx, clip in enumerate(detected_clips):
                         db_clip = GeneratedClip(

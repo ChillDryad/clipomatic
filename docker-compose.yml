@@ -12,6 +12,7 @@ services:
     container_name: momiji-clipper
     volumes:
       - ./workspace:/app/workspace
+    env_file: .env
     environment:
       - WORKSPACE_DIR=/app/workspace
       - WHISPER_MODEL=${WHISPER_MODEL:-large-v3}

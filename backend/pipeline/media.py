@@ -131,6 +131,10 @@ def extract_frame(video_path: str, timestamp: float, output_dir: str) -> str:
     os.makedirs(output_dir, exist_ok=True)
     out_path = os.path.join(output_dir, f"frame_{timestamp:.2f}.jpg")
 
+    # Return cached frame if it already exists
+    if os.path.exists(out_path):
+        return out_path
+
     # Check if video_path is a URL (starts with http/https)
     is_url = video_path.startswith("http://") or video_path.startswith("https://")
 

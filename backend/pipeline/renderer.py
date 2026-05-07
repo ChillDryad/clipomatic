@@ -20,6 +20,22 @@ class CropBox:
     h: int
 
 
+_NVENC_AVAILABLE: bool | None = None
+
+
+def _nvenc_available() -> bool:
+    """Check if h264_nvenc encoder is available (cached after first call)."""
+    global _NVENC_AVAILABLE
+    if _NVENC_AVAILABLE is not None:
+        return _NVENC_AVAILABLE
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-encoders"],
+        capture_output=True, text=True,
+    )
+    _NVENC_AVAILABLE = "h264_nvenc" in result.stdout
+    return _NVENC_AVAILABLE
+
+
 _QUALITY_SETTINGS: dict[str, dict] = {
     "standard": {
         "preset": "medium",
@@ -335,22 +351,19 @@ def render_clip(
     caption_style: str = "karaoke",
     words_per_line: int = 1,
     quality_preset: str = "standard",
+    layout_mode: str = "stacked",
+    thumbnail_path: str | None = None,
+    thumbnail_duration: float = 5.0,
 ) -> str:
     """
-    Render a single clip to a 9:16 vertical MP4 with stacked layout and
-    per-word karaoke subtitles.
+    Render a single clip to a 9:16 vertical MP4 with per-word karaoke subtitles.
 
     caption_style: "karaoke" for sweep highlight, "capcut" for solid highlight.
     words_per_line: 1 for word-by-word, 2-4 for multi-word subtitle style.
     quality_preset: "standard" or "production" for FFmpeg encoding settings.
-
-    Layout:
-        ┌────────────────┐
-        │ gameplay (top) │  output_height / 2  px
-        ├────────────────┤
-        │  avatar (bot)  │  output_height / 2  px
-        └────────────────┘
-        [subtitles overlay just above avatar]
+    layout_mode: "stacked" (gameplay top, avatar bottom),
+                 "camera_only" (avatar full-frame),
+                 "gameplay_only" (gameplay full-frame).
 
     Returns the path to the rendered .mp4 file.
     """
@@ -398,6 +411,19 @@ def render_clip(
 
     half_h = output_height // 2  # each panel takes half the output height
 
+    if layout_mode == "camera_only" and not crop_avatar:
+        raise ValueError("layout_mode='camera_only' requires crop_avatar")
+    if layout_mode == "gameplay_only" and not crop_game:
+        raise ValueError("layout_mode='gameplay_only' requires crop_game")
+
+    # Validate crop dimensions before calling FFmpeg
+    for label, crop in [("crop_avatar", crop_avatar), ("crop_game", crop_game)]:
+        if crop is not None and (crop.w <= 0 or crop.h <= 0 or crop.x < 0 or crop.y < 0):
+            raise ValueError(
+                f"Invalid {label}: x={crop.x}, y={crop.y}, w={crop.w}, h={crop.h} — "
+                f"all dimensions must be positive"
+            )
+
     # ---- Build ASS subtitle file (per-word karaoke, CapCut style) ----
     ass_content = _build_ass_word_by_word(
         segments=segments,
@@ -428,15 +454,63 @@ def render_clip(
         ass_escaped = _escape_ass_path(ass_path)
 
         # ---- Build FFmpeg filtergraph ----
-        split = "[0:v]split=2[v1][v2]"
-        avatar_crop = _build_crop_filter("[v1]", "[avatar]", crop_avatar, start, end, output_width, half_h)
-        game_crop = _build_crop_filter("[v2]", "[game]", crop_game, start, end, output_width, half_h)
-        stack = "[game][avatar]vstack=inputs=2[stacked]"
-        subtitle_filter = f"[stacked]subtitles='{ass_escaped.replace(chr(39), chr(39)+chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-        filtergraph = "; ".join([split, avatar_crop, game_crop, stack, subtitle_filter])
+        if layout_mode == "stacked":
+            split = "[0:v]split=2[v1][v2]"
+            avatar_crop = _build_crop_filter("[v1]", "[avatar]", crop_avatar, start, end, output_width, half_h)
+            game_crop = _build_crop_filter("[v2]", "[game]", crop_game, start, end, output_width, half_h)
+            stack = "[game][avatar]vstack=inputs=2[stacked]"
+            subtitle_filter = f"[stacked]subtitles='{ass_escaped.replace(chr(39), chr(39)+chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+            filtergraph = "; ".join([split, avatar_crop, game_crop, stack, subtitle_filter])
+        elif layout_mode == "camera_only":
+            cam_crop = _build_crop_filter("[0:v]", "[cam]", crop_avatar, start, end, output_width, output_height)
+            sub_f = f"[cam]subtitles='{ass_escaped.replace(chr(39), chr(39)+chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+            filtergraph = "; ".join([cam_crop, sub_f])
+        elif layout_mode == "gameplay_only":
+            game_crop = _build_crop_filter("[0:v]", "[game]", crop_game, start, end, output_width, output_height)
+            sub_f = f"[game]subtitles='{ass_escaped.replace(chr(39), chr(39)+chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+            filtergraph = "; ".join([game_crop, sub_f])
+        else:
+            raise ValueError(f"Unknown layout_mode: {layout_mode}")
+
+        # ---- Thumbnail embedding (append as final frames, audio continues) ----
+        extra_inputs = []
+        map_video = "[out]"
+        if thumbnail_path and os.path.exists(thumbnail_path):
+            main_duration = max(1.0, duration - thumbnail_duration)
+            thumb_frames = int(thumbnail_duration * 30)
+
+            trim_main = (
+                f"[out]trim=end={main_duration},setpts=PTS-STARTPTS[main_v]"
+            )
+            thumb_still = (
+                f"[1:v]scale={output_width}:{output_height}"
+                f":force_original_aspect_ratio=decrease"
+                f",pad={output_width}:{output_height}:(ow-iw)/2:(oh-ih)/2:color=black"
+                f",loop=loop={thumb_frames}:size=1,setpts=PTS-STARTPTS[thumb_v]"
+            )
+            concat = "[main_v][thumb_v]concat=n=2:v=1:a=0[final_v]"
+            filtergraph = "; ".join([filtergraph, trim_main, thumb_still, concat])
+            map_video = "[final_v]"
+            extra_inputs = ["-i", thumbnail_path]
+
+        # Check if video has an audio stream; skip audio filters if not
+        has_audio = False
+        aprobe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "stream=codec_type", "-of", "json", video_path],
+            capture_output=True, text=True,
+        )
+        if aprobe.returncode == 0 and aprobe.stdout.strip():
+            try:
+                streams = json.loads(aprobe.stdout).get("streams", [])
+                has_audio = any(s.get("codec_type") == "audio" for s in streams)
+            except json.JSONDecodeError:
+                has_audio = True  # assume audio if we can't probe
 
         # Audio: trim to clip window and reset timestamps
-        audio_filter = f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[aout]"
+        if has_audio:
+            audio_filter = f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[aout]"
+        else:
+            audio_filter = ""
 
         # ---- Output path ----
         safe_title = re.sub(r"[^\w\- ]", "", clip.get("title", "clip"))[:40].strip()
@@ -445,16 +519,24 @@ def render_clip(
 
         settings = _QUALITY_SETTINGS.get(quality_preset, _QUALITY_SETTINGS["standard"])
         encoder = settings.get("encoder", "libx264")
+        # Fall back to libx264 if NVENC is not available
+        if encoder == "h264_nvenc" and not _nvenc_available():
+            encoder = "libx264"
+            settings = _QUALITY_SETTINGS["fast"]
         is_nvenc = encoder == "h264_nvenc"
 
         cmd = [
             "ffmpeg", "-y",
             "-i", video_path,
-            "-filter_complex", filtergraph + "; " + audio_filter,
-            "-map", "[out]",
-            "-map", "[aout]",
-            "-c:v", encoder,
+            *extra_inputs,
+            "-filter_complex", (filtergraph + "; " + audio_filter) if has_audio else filtergraph,
+            "-map", map_video,
         ]
+
+        if has_audio:
+            cmd.extend(["-map", "[aout]"])
+
+        cmd.extend(["-c:v", encoder])
 
         if is_nvenc:
             # NVENC uses bitrate control instead of CRF
@@ -476,12 +558,13 @@ def render_clip(
             cmd.extend(["-level", settings["level"]])
             cmd.extend(["-pix_fmt", "yuv420p"])
 
-        cmd.extend([
-            "-c:a", "aac",
-            "-b:a", settings["audio_bitrate"],
-            "-movflags", "+faststart",
-            out_path,
-        ])
+        if has_audio:
+            cmd.extend([
+                "-c:a", "aac",
+                "-b:a", settings["audio_bitrate"],
+            ])
+
+        cmd.extend(["-movflags", "+faststart", out_path])
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -492,19 +575,25 @@ def render_clip(
                 raise RuntimeError(
                     f"FFmpeg rendering failed: Input file not found.\n"
                     f"This usually means the video file was deleted or moved.\n"
-                    f"FFmpeg error: {stderr[:500]}"
+                    f"FFmpeg error:\n{stderr}"
                 )
             if "Invalid argument" in stderr or "Invalid data" in stderr:
                 raise RuntimeError(
-                    f"FFmpeg rendering failed: Invalid video format or corrupted file.\n"
-                    f"FFmpeg error: {stderr[:500]}"
+                    f"FFmpeg rendering failed: Invalid argument.\n"
+                    f"This may indicate a problem with the clip region (crop dimensions), "
+                    f"subtitle file, or encoding settings.\n"
+                    f"Crop avatar: {crop_avatar}\n"
+                    f"Crop game: {crop_game}\n"
+                    f"Layout: {layout_mode}\n"
+                    f"Start: {start}, End: {end}\n"
+                    f"FFmpeg error:\n{stderr}"
                 )
             if "matches no streams" in stderr:
                 raise RuntimeError(
                     f"FFmpeg rendering failed: Clip timestamps don't match the video.\n"
                     f"This can happen when the clip start/end times are outside the video duration.\n"
                     f"Requested: {start:.1f}s to {end:.1f}s ({duration:.1f}s)\n"
-                    f"FFmpeg error: {stderr[:500]}"
+                    f"FFmpeg error:\n{stderr}"
                 )
             raise RuntimeError(
                 f"FFmpeg rendering failed (exit {result.returncode}):\n"
@@ -550,6 +639,7 @@ def render_timeline(
     caption_style: str = "karaoke",
     words_per_line: int = 1,
     quality_preset: str = "standard",
+    layout_mode: str = "stacked",
 ) -> str:
     """
     Render full timeline with multi-track support.
@@ -562,14 +652,9 @@ def render_timeline(
     - Audio mixing (multiple BGM/SFX tracks)
     - Marker chapters (embedded in output metadata)
 
-    Layout:
-        ┌────────────────┐
-        │ gameplay (top) │  output_height / 2  px
-        ├────────────────┤
-        │  avatar (bot)  │  output_height / 2  px
-        └────────────────┘
-        [subtitles overlay just above avatar]
-        [overlays positioned according to track settings]
+    layout_mode: "stacked" (gameplay top, avatar bottom),
+                 "camera_only" (avatar full-frame),
+                 "gameplay_only" (gameplay full-frame).
 
     Returns the path to the rendered .mp4 file.
     """
@@ -616,33 +701,53 @@ def render_timeline(
         input_args = ["-i", video_path]
         output_map = []
 
-        # Base video processing
-        split = "[0:v]split=2[v1][v2]"
-        filter_parts.append(split)
+        if layout_mode == "camera_only":
+            if not crop_avatar:
+                video_w, video_h = get_video_dimensions(video_path)
+                crop_avatar = CropBox(x=video_w // 4, y=video_h // 4, w=video_w // 2, h=video_h // 2)
+            cam_crop = _build_crop_filter("[0:v]", "[cam]", crop_avatar, start, end, output_width, output_height)
+            filter_parts.append(cam_crop)
+            subtitle_filter = f"[cam]subtitles='{ass_escaped.replace(chr(39), chr(39)+chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[subtitled]"
+            filter_parts.append(subtitle_filter)
+            current_input = "[subtitled]"
+        elif layout_mode == "gameplay_only":
+            if not crop_game:
+                video_w, video_h = get_video_dimensions(video_path)
+                crop_game = CropBox(x=0, y=0, w=video_w, h=video_h // 2)
+            game_crop = _build_crop_filter("[0:v]", "[game]", crop_game, start, end, output_width, output_height)
+            filter_parts.append(game_crop)
+            subtitle_filter = f"[game]subtitles='{ass_escaped.replace(chr(39), chr(39)+chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[subtitled]"
+            filter_parts.append(subtitle_filter)
+            current_input = "[subtitled]"
+        else:
+            if layout_mode != "stacked":
+                raise ValueError(f"Unknown layout_mode: {layout_mode}")
+            # Base video processing — split into two streams
+            split = "[0:v]split=2[v1][v2]"
+            filter_parts.append(split)
 
-        # Avatar crop
-        if not crop_avatar:
-            video_w, video_h = get_video_dimensions(video_path)
-            crop_avatar = CropBox(x=video_w // 4, y=video_h // 4, w=video_w // 2, h=video_h // 2)
-        filter_parts.append(_build_crop_filter("[v1]", "[avatar]", crop_avatar, start, end, output_width, half_h))
+            # Avatar crop
+            if not crop_avatar:
+                video_w, video_h = get_video_dimensions(video_path)
+                crop_avatar = CropBox(x=video_w // 4, y=video_h // 4, w=video_w // 2, h=video_h // 2)
+            filter_parts.append(_build_crop_filter("[v1]", "[avatar]", crop_avatar, start, end, output_width, half_h))
 
-        # Gameplay crop
-        if not crop_game:
-            video_w, video_h = get_video_dimensions(video_path)
-            crop_game = CropBox(x=0, y=0, w=video_w, h=video_h // 2)
-        filter_parts.append(_build_crop_filter("[v2]", "[game]", crop_game, start, end, output_width, half_h))
+            # Gameplay crop
+            if not crop_game:
+                video_w, video_h = get_video_dimensions(video_path)
+                crop_game = CropBox(x=0, y=0, w=video_w, h=video_h // 2)
+            filter_parts.append(_build_crop_filter("[v2]", "[game]", crop_game, start, end, output_width, half_h))
 
-        # Stack gameplay over avatar
-        stack = "[game][avatar]vstack=inputs=2[stacked]"
-        filter_parts.append(stack)
+            # Stack gameplay over avatar
+            stack = "[game][avatar]vstack=inputs=2[stacked]"
+            filter_parts.append(stack)
 
-        # Apply subtitles
-        subtitle_filter = f"[stacked]subtitles='{ass_escaped.replace(chr(39), chr(39)+chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[subtitled]"
-        filter_parts.append(subtitle_filter)
+            # Apply subtitles
+            subtitle_filter = f"[stacked]subtitles='{ass_escaped.replace(chr(39), chr(39)+chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[subtitled]"
+            filter_parts.append(subtitle_filter)
+            current_input = "[subtitled]"
 
         # Process overlays
-        current_input = "[subtitled]"
-        overlay_inputs = []
 
         if overlays:
             for i, overlay in enumerate(overlays):
@@ -767,6 +872,10 @@ def render_timeline(
 
         settings = _QUALITY_SETTINGS.get(quality_preset, _QUALITY_SETTINGS["standard"])
         encoder = settings.get("encoder", "libx264")
+        # Fall back to libx264 if NVENC is not available
+        if encoder == "h264_nvenc" and not _nvenc_available():
+            encoder = "libx264"
+            settings = _QUALITY_SETTINGS["fast"]
         is_nvenc = encoder == "h264_nvenc"
 
         cmd = [

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTheme } from '../../hooks/useTheme'
+import { MomijiLogo } from '../ui/MomijiLogo'
 import { SettingsModal } from './SettingsModal'
 
 export function Navbar() {
@@ -11,9 +12,7 @@ export function Navbar() {
     <>
       <nav className="glass-navbar fixed top-0 left-0 right-0 z-50 h-14 md:h-12 flex items-center px-4 md:px-6">
         {/* Logo */}
-        <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-          <span className="text-lg md:text-base font-bold text-[var(--ctp-mauve)]">Momiji Clipper</span>
-        </Link>
+        <MomijiLogo />
 
         {/* Right actions */}
         <div className="ml-auto flex items-center gap-2">
@@ -49,7 +48,7 @@ export function Navbar() {
           {/* New Project */}
           <Link
             to="/pipeline"
-            className="btn-secondary text-sm"
+            className="btn-momiji-primary text-sm"
             title="New Project"
           >
             New Project

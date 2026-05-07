@@ -206,7 +206,7 @@ async def ingest_url(req: UrlRequest, user: User = Depends(get_current_user)):
             async def _redirect():
                 yield _sse_event({
                     "redirect": True,
-                    "project_id": project.id,
+                    "projectId": project.id,
                     "url": f"/video/{project.id}",
                     "message": f"Video already exists: {project.original_filename}",
                 })
@@ -281,7 +281,7 @@ async def ingest_twitch_stream(req: UrlRequest, user: User = Depends(get_current
             async def _redirect():
                 yield _sse_event({
                     "redirect": True,
-                    "project_id": project.id,
+                    "projectId": project.id,
                     "url": f"/video/{project.id}",
                     "message": f"Twitch VOD already exists: {project.original_filename}",
                 })

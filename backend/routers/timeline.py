@@ -106,6 +106,8 @@ class RenderClipRequest(BaseModel):
     caption_style: str | None = None
     words_per_line: int | None = None
     quality_preset: str | None = None
+    layout_mode: str = "stacked"
+    thumbnail_path: str | None = None
 
 
 class RenderSegmentRequest(BaseModel):
@@ -168,6 +170,8 @@ async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_
                 caption_style=req.caption_style,
                 words_per_line=req.words_per_line,
                 quality_preset=req.quality_preset,
+                layout_mode=req.layout_mode,
+                thumbnail_path=req.thumbnail_path,
             )
             rel = os.path.relpath(out_path, WORKSPACE)
             yield _sse_event({"done": True, "result": f"/workspace/{rel}"})
@@ -222,6 +226,97 @@ async def render_timeline_endpoint(req: RenderTimelineRequest, user: User = Depe
             yield _sse_event({"done": True, "result": f"/workspace/{rel}"})
         except Exception as exc:
             logger.exception("Timeline render failed")
+            yield _sse_event({"error": str(exc)})
+
+    return _sse_response(generate())
+
+
+@render_router.post("/preview")
+async def render_preview_endpoint(req: RenderClipRequest, user: User = Depends(get_current_user)):
+    """Render a low-res preview of a clip. Identical layout to final render, half resolution, fast encode.
+
+    SSE: single done event. Cached: identical params return cached preview instantly.
+    """
+    from pipeline.renderer import render_clip, CropBox
+    import hashlib
+    import json
+    import shutil
+
+    preview_dir = os.path.join(WORKSPACE, "previews")
+    os.makedirs(preview_dir, exist_ok=True)
+
+    video_path = req.video_path
+    if video_path.startswith("/workspace/"):
+        video_path = os.path.join(WORKSPACE, video_path.removeprefix("/workspace/"))
+
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail=f"Video file not found: {video_path}")
+
+    # Generate deterministic cache key from render parameters
+    cache_key = hashlib.md5(
+        json.dumps({
+            "video_path": video_path,
+            "clip": req.clip,
+            "crop_avatar": req.crop_avatar,
+            "crop_game": req.crop_game,
+            "layout_mode": req.layout_mode,
+            "font_name": req.font_name,
+            "font_size": req.font_size,
+            "caption_style": req.caption_style,
+            "words_per_line": req.words_per_line,
+            "thumbnail_path": req.thumbnail_path,
+        }, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16]
+
+    preview_path = os.path.join(preview_dir, f"preview_{cache_key}.mp4")
+
+    # Check cache
+    if os.path.exists(preview_path):
+        rel = os.path.relpath(preview_path, WORKSPACE)
+        async def cached_gen():
+            yield _sse_event({"progress": 1.0, "label": "Cached preview"})
+            yield _sse_event({"done": True, "result": f"/workspace/{rel}"})
+        return _sse_response(cached_gen())
+
+    async def generate():
+        yield _sse_event({"progress": 0.1, "label": "Generating preview…"})
+        try:
+            out_path = await asyncio.to_thread(
+                render_clip,
+                video_path=video_path,
+                clip=req.clip,
+                crop_avatar=CropBox(**req.crop_avatar) if req.crop_avatar else None,
+                crop_game=CropBox(**req.crop_game) if req.crop_game else None,
+                segments=req.segments,
+                output_dir=preview_dir,
+                font_name=req.font_name,
+                font_color=req.font_color,
+                highlight_color=req.highlight_color,
+                outline_color=req.outline_color,
+                outline_width=req.outline_width,
+                shadow_color=req.shadow_color,
+                shadow_depth=req.shadow_depth,
+                shadow_opacity=req.shadow_opacity,
+                font_size=int((req.font_size or 50) * 0.5),
+                subtitle_fade_in_ms=req.subtitle_fade_in_ms,
+                subtitle_fade_out_ms=req.subtitle_fade_out_ms,
+                caption_style=req.caption_style,
+                words_per_line=req.words_per_line,
+                quality_preset="fast",
+                layout_mode=req.layout_mode,
+                output_width=540,
+                output_height=960,
+                thumbnail_path=req.thumbnail_path,
+            )
+            # Rename to cache key for next cache hit
+            cached = os.path.join(preview_dir, f"preview_{cache_key}.mp4")
+            if os.path.exists(out_path) and out_path != cached:
+                shutil.move(out_path, cached)
+
+            rel = os.path.relpath(cached, WORKSPACE)
+            yield _sse_event({"done": True, "result": f"/workspace/{rel}"})
+        except Exception as exc:
+            logger.exception("Preview render failed")
             yield _sse_event({"error": str(exc)})
 
     return _sse_response(generate())

@@ -14,43 +14,66 @@ from pipeline.transcription import transcript_to_text
 logger = logging.getLogger(__name__)
 
 BRAND_PILLARS = """
-- "cozy big sister energy": warm, nurturing moments; soft gameplay commentary; comforting monologues
-- "gap moe / sudden gaming rage": unexpected emotional outbursts, sudden screaming/swearing mid-cozy moment, intense skill expression
-- "deep lore drops / funny out-of-context quotes": surprisingly philosophical tangents, absurdist one-liners, lore-heavy character backstory drops
+- "cozy big sister energy": warm, nurturing moments; soft gameplay commentary; comforting monologues; tea-sipping calm; encouraging viewers
+- "gap moe / sudden gaming rage": unexpected emotional outbursts; sudden screaming/swearing mid-cozy moment; intense skill expression; dramatic mood whiplash
+- "deep lore drops / funny out-of-context quotes": surprisingly philosophical tangents; absurdist one-liners; lore-heavy character backstory drops; memorable quotable moments
 """
 
-# Single-turn system prompt for Gemma4 — outputs JSON directly
 SINGLE_TURN_SYSTEM = f"""You are a viral clip editor specializing in VTuber VOD content.
 You will receive a timestamped transcript. Each line looks like:
- [MM:SS.ss] spoken words
-
+ [H:MM:SS.ss] spoken words (e.g. [0:02:05.00] = 2 minutes 5 seconds, [1:30:00.00] = 1 hour 30 minutes)
+## YOUR TASK
 Find 3-5 moments that would make great short clips (9–90 seconds each).
-Score each clip 0–100 purely on viral potential — hook strength, emotional peak, shareability.
-Note which brand pillars it touches (if any).
 
+## VIRALITY SCORING CRITERIA (0-100)
+Score based on these factors:
+- **Hook in first 3 seconds** (+25 pts): Question, surprise, emotion, or punchline immediately
+- **Emotional peak** (+25 pts): Laugh, rage, awe, vulnerability, or unexpected twist
+- **Standalone clarity** (+25 pts): Makes sense without prior context; no "wait, who is that?" confusion
+- **Shareability** (+25 pts): Relatable, quotable, or "you have to see this" energy
+
+## BRAND PILLAR MATCHING
+Only assign a pillar if the clip CLEARLY demonstrates it. It's okay to have empty brand_alignment.
 The brand pillars are:{BRAND_PILLARS}
+## WHAT TO AVOID
+- Dead air, loading screens, or setup chatter
+- Unresolved moments (clip ends before payoff)
+- Inside jokes that require 10 minutes of context
+- Clips where the best line is cut off
 
+## HOOK TYPES TO LOOK FOR
+- **Question hook**: "Wait, did I just...?"
+- **Emotional shift**: Calm → rage, confident → humbled
+- **Punchline**: Setup → payoff within the clip
+- **Surprise**: Unexpected game event, plot twist, viewer donation shock
+- **Relatability**: "We've all been there" gaming fails
+
+## OUTPUT FORMAT
 Output a JSON array. Each clip object must have exactly these keys:
- "title" (string) — Enticing but not clickbait-y. MUST include exactly 2-3 relevant hashtags at the end of the string.
+ "title" (string) — Enticing but not clickbait-y. MUST include exactly 2-3 relevant hashtags at the end.
  "start" (NUMBER) — start time in SECONDS only (e.g., 125.0 NOT "02:05.00")
  "end" (NUMBER) — end time in SECONDS only (e.g., 192.0 NOT "03:12.00")
  "reason" (string) — one sentence explaining why it's viral
- "virality_score" (integer 0–100) — viral potential only
- "brand_alignment" (array of strings) — matching pillar names, or empty array
- "description" (string) — A punchy, engaging caption that expands on the hook and encourages viewers to visit the stream.
- "description_hashtags" (array of strings) — A tiered list of supplemental hashtags (Broad, Niche, and Brand tags) to be placed at the bottom of the description.
- "recommendation_reason" (string) — Detailed explanation of why this specific moment was recommended, referencing the transcript content and brand pillars.
+ "virality_score" (integer 0–100) — based on criteria above
+ "brand_alignment" (array of strings) — matching pillar names ONLY if clear fit, or empty array
+ "description" (string) — A punchy caption that expands on the hook and encourages viewers to visit the stream.
+ "description_hashtags" (array of strings) — Tiered hashtags: Broad (#VTuber, #Gaming), Niche (#CozyGaming, #GapMoe), Brand (#MomijiYoru)
+ "recommendation_reason" (string) — Detailed explanation referencing transcript content, hook type, and brand pillars.
 
-CRITICAL: 
-1. Title Format: [Enticing Hook] [Hashtag 1] [Hashtag 2]. Max 3 hashtags total in title.
-2. Convert timestamps to SECONDS. Example: [02:05.00] → start: 125.0 (NOT "02:05.00")
-Formula: seconds = minutes * 60 + seconds
-3. Clips MUST be 9–90 seconds.
+## TIMESTAMP CONVERSION (CRITICAL)
+Formula: seconds = hours * 3600 + minutes * 60 + seconds
+Examples:
+ [0:02:05.00] → 125.0
+ [0:00:45.50] → 45.5
+ [1:30:00.00] → 5400.0
+ [0:01:30.00] → 90.0
 
-Example output:
+## CLIP LENGTH VALIDATION
+Every clip MUST be 9–90 seconds. Validate: (end - start) >= 9 AND (end - start) <= 90
+
+## EXAMPLE OUTPUT
 [
- {{"title": "She absolutely lost it 💀 #GamingFail #Shorts", "start": 125.0, "end": 192.0, "reason": "Peak emotional outburst with perfect comedic timing", "recommendation_reason": "This moment captures a sudden shift from cozy energy to intense gaming rage - the contrast is what makes it viral. The screaming reaction at 2:05 followed by immediate apology hits the 'gap moe' pillar perfectly. Comment engagement will be high because viewers love relatable gaming frustration.", "virality_score": 91, "brand_alignment": ["gap moe / sudden gaming rage"], "description": "Momiji's patience finally snapped and the result was pure chaos. Come hang out on the balcony for more rage-fueled gaming! 🏮", "description_hashtags": ["#VTuber", "#GapMoe", "#CozyGaming", "#MomijiYoru"]}},
- {{"title": "Wait what happened?? 🏮 #VTuber #Lore", "start": 540.0, "end": 585.0, "reason": "Absurdist one-liner that makes no sense out of context", "recommendation_reason": "This lore drop comes completely out of nowhere during a quiet moment, creating maximum whiplash. The deadpan delivery of such an absurd statement is peak VTuber content - it's the kind of quote that gets clipped and shared because it's so bizarre. Works especially well as a short because it needs no setup.", "virality_score": 78, "brand_alignment": ["deep lore drops / funny out-of-context quotes"], "description": "A sudden lore drop that changes everything we knew about the urban garden. You won't believe what she just admitted... 🌸", "description_hashtags": ["#Storytime", "#UrbanGarden", "#MomijiYoru", "#IndieGames"]}}
+ {{"title": "She absolutely lost it 💀 #GamingFail #Shorts", "start": 125.0, "end": 192.0, "reason": "Peak emotional outburst with perfect comedic timing", "virality_score": 91, "brand_alignment": ["gap moe / sudden gaming rage"], "description": "Momiji's patience finally snapped and the result was pure chaos. Come hang out on the balcony for more rage-fueled gaming! 🏮", "description_hashtags": ["#VTuber", "#GapMoe", "#CozyGaming", "#MomijiYoru"], "recommendation_reason": "This moment captures a sudden shift from cozy energy to intense gaming rage - the contrast is what makes it viral. The screaming reaction at 2:05 followed by immediate apology hits the 'gap moe' pillar perfectly. Hook type: emotional shift. Comment engagement will be high because viewers love relatable gaming frustration."}}
 ]
 
 Output ONLY the JSON array. No markdown, no explanations, no code fences."""
@@ -218,7 +241,7 @@ def _parse_clips(raw: str) -> list[dict]:
     )
 
 
-def _chat(client, model: str, system: str, messages: list[dict], temperature: float = 0.4, timeout: float = 120.0) -> str:
+def _chat(client, model: str, system: str, messages: list[dict], temperature: float = 0.4, timeout: float = 300.0) -> str:
     """
     Send a chat request, falling back if json_object response_format is unsupported.
 
@@ -228,7 +251,7 @@ def _chat(client, model: str, system: str, messages: list[dict], temperature: fl
         system: System prompt
         messages: User/assistant messages
         temperature: Sampling temperature
-        timeout: Request timeout in seconds (default 120s)
+        timeout: Request timeout in seconds (default 300s / 5 minutes)
     """
     kwargs = dict(
         model=model,
@@ -249,7 +272,7 @@ def detect_highlights(
     base_url: str,
     model: str,
     progress_callback=None,
-    timeout_per_chunk: float = 120.0,  # 2 minutes per LLM call (Gemma4 is faster)
+    timeout_per_chunk: float = 300.0,  # 5 minutes per LLM call (increased for larger models)
     fallback_model: str = _FALLBACK_MODEL,
 ) -> list[dict]:
     """
@@ -334,6 +357,17 @@ def detect_highlights(
             continue
 
     _cb(0.95, f"Found {len(all_clips)} raw clips — deduplicating…")
+
+    # Filter out clips outside video duration (LLM hallucination guard)
+    video_duration = transcript.get("duration", 0)
+    if video_duration > 0:
+        before = len(all_clips)
+        all_clips = [
+            c for c in all_clips
+            if c["start"] >= 0 and c["end"] <= video_duration and c["start"] < c["end"]
+        ]
+        if len(all_clips) < before:
+            _cb(0.95, f"Filtered {before - len(all_clips)} clips outside video duration ({video_duration:.0f}s)")
 
     # Deduplicate by time-window overlap (>50% of the shorter clip's duration).
     # When two clips overlap, keep the one with the higher virality_score.

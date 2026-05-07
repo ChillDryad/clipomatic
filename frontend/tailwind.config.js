@@ -23,6 +23,18 @@ export default {
           yellow:     'var(--ctp-yellow)',
           blue:       'var(--ctp-blue)',
         },
+        momiji: {
+          sakura:     'var(--momiji-sakura)',
+          'neon-pink': 'var(--momiji-neon-pink)',
+          red:        'var(--momiji-red)',
+          plant:      'var(--momiji-plant)',
+          'neon-green': 'var(--momiji-neon-green)',
+          bg:         'var(--momiji-bg)',
+          surface:    'var(--momiji-surface)',
+          text:       'var(--momiji-text)',
+          subtext:    'var(--momiji-subtext)',
+          border:     'var(--momiji-border)',
+        },
       },
       borderRadius: {
         xl: '12px',
@@ -49,6 +61,19 @@ export default {
           '0%, 100%': { opacity: '0.6' },
           '50%': { opacity: '1' },
         },
+        neonPulse: {
+          '0%, 100%': { boxShadow: '0 0 10px rgba(0, 255, 157, 0.2)' },
+          '50%': { boxShadow: '0 0 20px rgba(0, 255, 157, 0.5)' },
+        },
+        pulseSlow: {
+          '0%, 100%': { opacity: '0.8', transform: 'scale(1)' },
+          '50%': { opacity: '1', transform: 'scale(1.05)' },
+        },
+        sakuraDrift: {
+          '0%': { transform: 'translateY(-10px) translateX(0) rotate(0deg)', opacity: '0' },
+          '10%': { opacity: '1' },
+          '100%': { transform: 'translateY(100vh) translateX(50px) rotate(360deg)', opacity: '0' },
+        },
       },
       animation: {
         stepPulse: 'stepPulse 2s ease-in-out infinite',
@@ -56,6 +81,9 @@ export default {
         fadeIn: 'fadeIn 0.2s ease-out',
         shimmerGradient: 'shimmerGradient 2s linear infinite',
         glowPulse: 'glowPulse 1.2s ease-in-out infinite',
+        neonPulse: 'neonPulse 1.5s ease-in-out infinite',
+        'pulse-slow': 'pulseSlow 3s ease-in-out infinite',
+        'sakura-drift': 'sakuraDrift 3s ease-out infinite',
       },
     },
   },

@@ -2,20 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Glass Design Tokens ─────────────────────────────────────── */
+/* ── Momiji "Neon Sakura" Design Tokens ──────────────────────── */
 :root {
-  /* Glass surfaces */
+  /* Brand Colors */
+  --momiji-sakura: #ffb7c5;
+  --momiji-neon-pink: #ff69b4;
+  --momiji-red: #b40829;
+  --momiji-plant: #2d5016;
+  --momiji-neon-green: #00ff9d;
+
+  /* Base Colors (Light Theme) */
+  --momiji-bg: #f5f0f4;
+  --momiji-surface: #e8e0e6;
+  --momiji-surface-light: #d9d0d8;
+  --momiji-text: #2d2a32;
+  --momiji-subtext: #5a5560;
+  --momiji-border: #c9b8c8;
+
+  /* Glass surfaces (Light) */
   --glass-bg: rgba(236, 241, 245, 0.80);
   --glass-border: rgba(136, 57, 239, 0.20);
   --glass-blur: blur(16px) saturate(180%);
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(136, 57, 239, 0.08);
   --glass-shadow-hover: 0 12px 48px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(136, 57, 239, 0.12);
 
-  /* Navbar glass */
+  /* Navbar glass (Light) */
   --glass-navbar-bg: rgba(236, 241, 245, 0.85);
   --glass-navbar-border: rgba(136, 57, 239, 0.15);
 
-  /* Input glass */
+  /* Input glass (Light) */
   --glass-input-bg: rgba(220, 224, 232, 0.60);
   --glass-input-border: rgba(136, 57, 239, 0.15);
 
@@ -24,21 +39,46 @@
   --glow-transcribe: rgba(64, 160, 43, 0.20);
   --glow-highlights: rgba(254, 100, 11, 0.20);
   --glow-review: rgba(136, 57, 239, 0.20);
+
+  /* Gradients (Light) */
+  --gradient-momiji: linear-gradient(135deg, #ffb7c5 0%, #ff69b4 100%);
+  --gradient-neon: linear-gradient(135deg, #ff69b4 0%, #00ff9d 100%);
+  --gradient-ambient: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(255, 183, 197, 0.20), transparent 70%);
+
+  /* Glow effects */
+  --glow-sakura: 0 0 20px rgba(255, 183, 197, 0.5);
+  --glow-neon: 0 0 20px rgba(0, 255, 157, 0.5);
+  --glow-primary: 0 0 20px rgba(255, 105, 180, 0.5);
 }
 
 [data-theme="dark"] {
-  /* Glass surfaces */
+  /* Brand Colors */
+  --momiji-sakura: #ffb7c5;
+  --momiji-neon-pink: #ff69b4;
+  --momiji-red: #b40829;
+  --momiji-plant: #2d5016;
+  --momiji-neon-green: #00ff9d;
+
+  /* Base Colors (Dark Theme) */
+  --momiji-bg: #1a1a2e;
+  --momiji-surface: #252542;
+  --momiji-surface-light: #3a3a5c;
+  --momiji-text: #f0e6ef;
+  --momiji-subtext: #c9b8c8;
+  --momiji-border: #4a4a6a;
+
+  /* Glass surfaces (Dark) */
   --glass-bg: rgba(30, 30, 46, 0.75);
   --glass-border: rgba(203, 166, 247, 0.18);
   --glass-blur: blur(16px) saturate(180%);
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(203, 166, 247, 0.08);
   --glass-shadow-hover: 0 12px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(203, 166, 247, 0.14);
 
-  /* Navbar glass */
+  /* Navbar glass (Dark) */
   --glass-navbar-bg: rgba(24, 24, 37, 0.88);
   --glass-navbar-border: rgba(203, 166, 247, 0.20);
 
-  /* Input glass */
+  /* Input glass (Dark) */
   --glass-input-bg: rgba(49, 50, 68, 0.55);
   --glass-input-border: rgba(203, 166, 247, 0.15);
 
@@ -47,6 +87,16 @@
   --glow-transcribe: rgba(166, 227, 161, 0.25);
   --glow-highlights: rgba(250, 179, 135, 0.25);
   --glow-review: rgba(203, 166, 247, 0.25);
+
+  /* Gradients (Dark) */
+  --gradient-momiji: linear-gradient(135deg, #ffb7c5 0%, #ff69b4 100%);
+  --gradient-neon: linear-gradient(135deg, #ff69b4 0%, #00ff9d 100%);
+  --gradient-ambient: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(255, 105, 180, 0.15), transparent 70%);
+
+  /* Glow effects */
+  --glow-sakura: 0 0 20px rgba(255, 183, 197, 0.5);
+  --glow-neon: 0 0 20px rgba(0, 255, 157, 0.5);
+  --glow-primary: 0 0 20px rgba(255, 105, 180, 0.5);
 }
 
 /* Animation for expanding cards */
@@ -168,7 +218,7 @@
     content: '';
     position: fixed;
     inset: 0;
-    background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(203, 166, 247, 0.12), transparent 70%);
+    background: var(--gradient-ambient);
     pointer-events: none;
     z-index: 0;
   }
@@ -203,11 +253,39 @@
     border: 1px solid var(--glass-border);
     border-radius: 16px;
     box-shadow: var(--glass-shadow);
-    transition: box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .glass-card:hover {
     box-shadow: var(--glass-shadow-hover);
+    transform: translateY(-1px);
+    border-color: var(--momiji-sakura);
+  }
+
+  /* Elevated — for hero cards, featured content */
+  .glass-card-elevated {
+    background: rgba(37, 37, 66, 0.8);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 183, 197, 0.3);
+    border-radius: 16px;
+    box-shadow:
+      0 20px 60px rgba(180, 8, 41, 0.15),
+      0 0 40px rgba(255, 105, 180, 0.1);
+    transition: box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .glass-card-elevated:hover {
+    transform: translateY(-2px);
+  }
+
+  /* Subtle — secondary content, nested panels */
+  .glass-card-subtle {
+    background: rgba(37, 37, 66, 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 183, 197, 0.08);
+    border-radius: 12px;
   }
 
   /* ── Glass navbar ── */
@@ -344,6 +422,70 @@
   .btn-danger:hover { opacity: 0.9; }
   .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
 
+  /* Momiji Primary — gradient with hover glow */
+  .btn-momiji-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 9999px;
+    border: none;
+    background: var(--gradient-momiji);
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 600;
+    color: #1a1a2e;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn-momiji-primary:hover {
+    box-shadow: var(--glow-primary);
+    transform: translateY(-1px);
+  }
+
+  .btn-momiji-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  /* Neon — cyber accent button */
+  .btn-momiji-neon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 9999px;
+    border: 2px solid var(--momiji-neon-green);
+    background: transparent;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 600;
+    color: var(--momiji-neon-green);
+    box-shadow: 0 0 10px rgba(0, 255, 157, 0.2);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+  }
+
+  .btn-momiji-neon:hover {
+    background: rgba(0, 255, 157, 0.1);
+    box-shadow: 0 0 20px rgba(0, 255, 157, 0.4);
+    transform: translateY(-1px);
+  }
+
+  .btn-momiji-neon:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
   /* ── Form fields ── */
   .input-field {
     @apply w-full bg-[var(--ctp-surface)] border border-[var(--ctp-overlay)] rounded-lg px-3 py-2 text-sm
@@ -418,7 +560,7 @@
   .glass-progress-fill {
     height: 100%;
     border-radius: 999px;
-    background: linear-gradient(90deg, var(--ctp-mauve) 0%, var(--ctp-blue) 100%);
+    background: linear-gradient(90deg, var(--momiji-sakura) 0%, var(--momiji-neon-pink) 50%, var(--momiji-neon-green) 100%);
     background-size: 200% 100%;
     animation: shimmerGradient 2s linear infinite;
     position: relative;
@@ -434,10 +576,28 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: var(--ctp-mauve);
+    background: var(--momiji-neon-pink);
     filter: blur(4px);
     opacity: 0.8;
     animation: glowPulse 1.2s ease-in-out infinite;
+  }
+
+  /* Falling sakura petal on progress bar */
+  .glass-progress-fill::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    right: 0;
+    width: 8px;
+    height: 8px;
+    background: var(--momiji-sakura);
+    border-radius: 50% 0 50% 0;
+    animation: petal-fall 1s ease-out infinite;
+  }
+
+  @keyframes petal-fall {
+    0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(20px) rotate(180deg); opacity: 0; }
   }
 
   /* ── Glowing monospace number ── */
@@ -456,6 +616,11 @@
   /* ── Clip card virality border ── */
   .clip-card {
     @apply glass-card relative overflow-hidden;
+  }
+
+  .clip-card:hover {
+    border-color: var(--momiji-sakura);
+    transform: translateY(-2px);
   }
 
   .clip-card-high::before { background: linear-gradient(180deg, var(--ctp-green) 0%, transparent 100%); }
@@ -589,6 +754,94 @@
 
   .breadcrumb-dot-done {
     @apply bg-[var(--ctp-green)] text-[var(--ctp-base)] border border-[var(--ctp-green)] cursor-pointer;
+  }
+
+  /* Themed step states */
+  .step-active .step-icon,
+  .step-active {
+    color: var(--momiji-neon-green);
+    text-shadow: 0 0 12px rgba(0, 255, 157, 0.5);
+    border-color: var(--momiji-neon-green);
+    box-shadow: 0 0 12px rgba(0, 255, 157, 0.3);
+    animation: neon-pulse 1.5s ease-in-out infinite;
+  }
+
+  .step-done .step-icon,
+  .step-done {
+    color: var(--momiji-sakura);
+    background: rgba(255, 183, 197, 0.15);
+    border-color: var(--momiji-sakura);
+  }
+
+  .step-pending .step-icon,
+  .step-pending {
+    color: #6b6b8a;
+    opacity: 0.5;
+    border-color: rgba(107, 107, 138, 0.3);
+  }
+
+  /* ── Gradient text ── */
+  .text-gradient-momiji {
+    background: var(--gradient-momiji);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* ── Bloom indicators for clip cards ── */
+  .bloom-indicator {
+    font-size: 10px;
+    line-height: 1;
+    filter: drop-shadow(0 0 2px rgba(255, 105, 180, 0.3));
+  }
+
+  .bloom-glow-high {
+    filter: drop-shadow(0 0 6px rgba(255, 105, 180, 0.6));
+  }
+
+  .bloom-glow-mid {
+    filter: drop-shadow(0 0 3px rgba(255, 105, 180, 0.4));
+  }
+
+  /* ── Neon pulse animation ── */
+  @keyframes neon-pulse {
+    0%, 100% { box-shadow: 0 0 10px rgba(0, 255, 157, 0.2); }
+    50% { box-shadow: 0 0 20px rgba(0, 255, 157, 0.5); }
+  }
+
+  .animate-neon-pulse {
+    animation: neon-pulse 1.5s ease-in-out infinite;
+  }
+
+  /* ── Sakura petal fall animation ── */
+  @keyframes sakura-drift {
+    0% {
+      transform: translateY(-10px) translateX(0) rotate(0deg);
+      opacity: 0;
+    }
+    10% { opacity: 1; }
+    100% {
+      transform: translateY(100vh) translateX(50px) rotate(360deg);
+      opacity: 0;
+    }
+  }
+
+  .sakura-particle {
+    width: 12px;
+    height: 12px;
+    background: linear-gradient(135deg, #ffb7c5, #ff69b4);
+    border-radius: 50% 0 50% 0;
+    animation: sakura-drift 3s ease-out infinite;
+  }
+
+  /* ── Slow pulse for logo ── */
+  @keyframes pulse-slow {
+    0%, 100% { opacity: 0.8; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.05); }
+  }
+
+  .animate-pulse-slow {
+    animation: pulse-slow 3s ease-in-out infinite;
   }
 
   /* ── Animations ───────────────────────────────────────────── */

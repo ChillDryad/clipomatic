@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { uploadFile, downloadUrl, streamTwitchAudio, checkTwitchCache, listTwitchVods, twitchAuthorizeUrl, createProject, parseApiError, getAbortController, cancelOperation, type TwitchVod, getProjectPipelineState, saveCachedTranscript } from '../../api'
 import { ProgressBar } from '../ui/ProgressBar'
 import { usePipeline } from '../../context/PipelineContext'
@@ -25,6 +26,16 @@ export function StepIngest() {
   const [hasExistingProject, setHasExistingProject] = useState(false)
 
   const { setTranscript, setClips } = usePipeline()
+  const [searchParams] = useSearchParams()
+
+  // Restore project from ?restore=<projectId> query parameter
+  useEffect(() => {
+    if (projectId) return
+    const restoreParam = searchParams.get('restore')
+    if (restoreParam) {
+      setProjectId(restoreParam)
+    }
+  }, [])
 
   // Check for existing project state on mount
   useEffect(() => {
@@ -59,6 +70,7 @@ export function StepIngest() {
   const [videoName, setVideoName] = useState('')
   const [showNameInput, setShowNameInput] = useState(false)
   const [pendingVideoPath, setPendingVideoPath] = useState<string | null>(null)
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null)
   const [videoTitle, setVideoTitle] = useState<string | null>(null)
 
   const prog = (value: number, label: string) => setProgress({ value, label })
@@ -105,9 +117,14 @@ export function StepIngest() {
   const handleNameSubmit = async () => {
     if (!videoName.trim() || !pendingVideoPath) return
     try {
-      const project = await handleCreateProject(pendingVideoPath, videoName.trim())
+      if (pendingProjectId) {
+        // Use project already created by backend during upload
+        setProjectId(pendingProjectId);
+      } else {
+        const project = await handleCreateProject(pendingVideoPath, videoName.trim())
+        setProjectId(project.id)
+      }
       setSource({ videoPath: pendingVideoPath, audioPath: null, twitchUrl: null, videoUrl: null }, null)
-      setProjectId(project.id)
       setShowNameInput(false)
       setVideoName('')
       setPendingVideoPath(null)
@@ -130,6 +147,7 @@ export function StepIngest() {
       setProgress(null)
       // Show name input after upload completes
       setPendingVideoPath(result.videoPath)
+      setPendingProjectId(result.projectId || null)
       setVideoName(file.name.replace(/\.[^.]+$/, '')) // Pre-fill with filename minus extension
       setShowNameInput(true)
     } catch (err) {
@@ -163,9 +181,14 @@ export function StepIngest() {
 
       // Auto-name from video title or URL
       const displayName = result.videoTitle || urlInput.trim().split('/').pop() || 'Unknown Video'
-      const project = await handleCreateProject(result.videoPath, displayName, urlInput.trim(), result.duration)
+      if (result.projectId) {
+        // Use project already created by backend during download
+        setProjectId(result.projectId)
+      } else {
+        const project = await handleCreateProject(result.videoPath, displayName, urlInput.trim(), result.duration)
+        setProjectId(project.id)
+      }
       setSource({ videoPath: result.videoPath, audioPath: null, twitchUrl: null, videoUrl: urlInput.trim() }, null)
-      setProjectId(project.id)
     } catch (err) {
       setProgress(null)
       if (String(err).includes('cancelled')) {
@@ -247,9 +270,14 @@ export function StepIngest() {
       const displayName = result.videoTitle || `Twitch VOD ${twitchInput.split('/').pop()}`
       const audioPath = result.audioPath
       if (!audioPath) throw new Error('No audio path returned from server')
-      const project = await handleCreateProject(audioPath, displayName, twitchInput.trim(), result.duration ?? null)
+      if (result.projectId) {
+        // Use project already created by backend during stream
+        setProjectId(result.projectId)
+      } else {
+        const project = await handleCreateProject(audioPath, displayName, twitchInput.trim(), result.duration ?? null)
+        setProjectId(project.id)
+      }
       setSource({ videoPath: null, audioPath, twitchUrl: twitchInput.trim(), videoUrl: null }, null)
-      setProjectId(project.id)
     } catch (err) {
       setProgress(null)
       if (String(err).includes('cancelled')) {

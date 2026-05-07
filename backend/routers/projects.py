@@ -123,8 +123,7 @@ async def list_projects(
 ):
     """List user's video projects, optionally filtered by team. Supports pagination."""
     async with get_session_cm() as session:
-        query = select(VideoProject).where(VideoProject.owner_id == user.id).distinct()
-
+        # Build base query for accessible projects
         if team_id:
             member_result = await session.execute(
                 select(TeamMember).where(TeamMember.team_id == team_id, TeamMember.user_id == user.id)
@@ -133,17 +132,37 @@ async def list_projects(
             if not member:
                 raise HTTPException(status_code=403, detail="Not a member of this team")
 
-            query = select(VideoProject).where(
-                or_(VideoProject.owner_id == user.id, VideoProject.team_id == team_id)
-            ).distinct()
+            # Subquery guarantees unique project IDs (avoids OR-condition duplicates)
+            project_ids = (
+                select(VideoProject.id)
+                .where(or_(VideoProject.owner_id == user.id, VideoProject.team_id == team_id))
+                .distinct()
+                .subquery()
+            )
+            base_query = select(VideoProject).where(VideoProject.id.in_(select(project_ids)))
+        else:
+            base_query = select(VideoProject).where(VideoProject.owner_id == user.id)
 
-        count_query = select(func.count()).select_from(query.subquery())
+        # Count total matching projects
+        count_query = select(func.count()).select_from(base_query.subquery())
         total_result = await session.execute(count_query)
         total = total_result.scalar() or 0
 
-        query = query.order_by(VideoProject.created_at.desc()).offset(offset).limit(limit)
+        # Paginate
+        query = base_query.order_by(VideoProject.created_at.desc()).offset(offset).limit(limit)
         result = await session.execute(query)
         projects = result.scalars().all()
+
+        # Fetch real clip counts
+        project_ids_list = [p.id for p in projects]
+        clip_counts: dict[str, int] = {}
+        if project_ids_list:
+            count_rows = await session.execute(
+                select(GeneratedClip.project_id, func.count().label("cnt"))
+                .where(GeneratedClip.project_id.in_(project_ids_list))
+                .group_by(GeneratedClip.project_id)
+            )
+            clip_counts = {row[0]: row[1] for row in count_rows}
 
     return {
         "projects": [
@@ -157,7 +176,7 @@ async def list_projects(
                 "duration": p.duration,
                 "status": p.status,
                 "created_at": p.created_at,
-                "clip_count": 0,
+                "clip_count": clip_counts.get(p.id, 0),
             }
             for p in projects
         ],
@@ -225,7 +244,9 @@ async def get_project(project_id: str, user: User = Depends(get_current_user)):
 
 @router.delete("/{project_id}")
 async def delete_project(project_id: str, user: User = Depends(get_current_user)):
-    """Delete a video project."""
+    """Delete a video project and clean up workspace files."""
+    import shutil
+
     async with get_session_cm() as session:
         result = await session.execute(select(VideoProject).where(VideoProject.id == project_id))
         project = result.scalar_one_or_none()
@@ -235,8 +256,75 @@ async def delete_project(project_id: str, user: User = Depends(get_current_user)
         if project.owner_id != user.id:
             raise HTTPException(status_code=403, detail="Access denied")
 
+        # Collect render paths before cascade delete
+        clips_result = await session.execute(
+            select(GeneratedClip).where(GeneratedClip.project_id == project_id)
+        )
+        render_paths = [c.render_path for c in clips_result.scalars().all() if c.render_path]
+
         await session.delete(project)
         await session.commit()
+
+    # Clean up workspace files (outside the session)
+    stem = os.path.splitext(os.path.basename(project.source_path))[0] if project.source_path else ""
+
+    # Source video (local files only, not URLs)
+    source_path = project.source_path
+    if source_path and not source_path.startswith("http://") and not source_path.startswith("https://"):
+        video_abs = os.path.join(WORKSPACE, source_path.removeprefix("/workspace/")) if source_path.startswith("/workspace/") else source_path
+        if os.path.exists(video_abs):
+            try:
+                os.remove(video_abs)
+            except OSError:
+                pass
+
+    # Cached transcript
+    transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
+    if os.path.exists(transcript_path):
+        try:
+            os.remove(transcript_path)
+        except OSError:
+            pass
+
+    # Cached clips
+    clips_json = os.path.join(WORKSPACE, f"{stem}_clips.json")
+    if os.path.exists(clips_json):
+        try:
+            os.remove(clips_json)
+        except OSError:
+            pass
+
+    # Rendered clip files
+    for rp in render_paths:
+        if rp:
+            rp_abs = os.path.join(WORKSPACE, rp.removeprefix("/workspace/"))
+            if os.path.exists(rp_abs):
+                try:
+                    os.remove(rp_abs)
+                except OSError:
+                    pass
+
+    # Thumbnail file
+    thumb_dir = os.path.join(WORKSPACE, "thumbnails")
+    if os.path.isdir(thumb_dir):
+        for ext in [".png", ".jpg", ".jpeg", ".webp"]:
+            thumb_path = os.path.join(thumb_dir, f"{project_id}{ext}")
+            if os.path.exists(thumb_path):
+                try:
+                    os.remove(thumb_path)
+                except OSError:
+                    pass
+
+    # Cached frames for this video
+    frames_dir = os.path.join(WORKSPACE, "frames")
+    if os.path.isdir(frames_dir):
+        for fname in os.listdir(frames_dir):
+            if fname.startswith(stem + "_") or f"frame_" in fname:
+                fpath = os.path.join(frames_dir, fname)
+                try:
+                    os.remove(fpath)
+                except OSError:
+                    pass
 
     return {"success": True}
 
@@ -312,6 +400,10 @@ async def update_project_clip(project_id: str, clip_index: int, req: dict, user:
             clip.brand_alignment = json.dumps(req["brand_alignment"]) if req["brand_alignment"] else None
         if "hashtags" in req:
             clip.hashtags = json.dumps(req["hashtags"]) if req["hashtags"] else None
+        if "crop_avatar" in req:
+            clip.crop_avatar = json.dumps(req["crop_avatar"]) if req["crop_avatar"] else None
+        if "crop_game" in req:
+            clip.crop_game = json.dumps(req["crop_game"]) if req["crop_game"] else None
 
         await session.commit()
 
@@ -353,6 +445,8 @@ async def get_project_clips(project_id: str, user: User = Depends(get_current_us
                         "brand_alignment": json.loads(c.brand_alignment) if c.brand_alignment else [],
                         "hashtags": json.loads(c.hashtags) if c.hashtags else [],
                         "render_path": c.render_path,
+                        "crop_avatar": json.loads(c.crop_avatar) if c.crop_avatar else None,
+                        "crop_game": json.loads(c.crop_game) if c.crop_game else None,
                     }
                     for c in db_clips
                 ],
@@ -463,88 +557,88 @@ async def get_project_pipeline_state(project_id: str, user: User = Depends(get_c
         )
         project = result.scalar_one_or_none()
 
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found.")
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found.")
 
-    # Load transcript from database (preferred) or cache file fallback
-    transcript = None
-    transcript_cached = False
+        # Load transcript from database (preferred) or cache file fallback
+        transcript = None
+        transcript_cached = False
 
-    # Try database first
-    transcript_result = await session.execute(
-        select(Transcript).where(Transcript.project_id == project_id)
-    )
-    db_transcript = transcript_result.scalar_one_or_none()
+        # Try database first
+        transcript_result = await session.execute(
+            select(Transcript).where(Transcript.project_id == project_id)
+        )
+        db_transcript = transcript_result.scalar_one_or_none()
 
-    if db_transcript:
-        transcript = {
-            "language": db_transcript.language,
-            "language_probability": db_transcript.language_probability,
-            "duration": db_transcript.duration,
-            "segments": json.loads(db_transcript.segments),
-        }
-        transcript_cached = True
-    else:
-        # Fallback to cache file
-        stem = os.path.splitext(os.path.basename(project.source_path))[0]
-        transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
-        if os.path.exists(transcript_path):
-            try:
-                with open(transcript_path, "r", encoding="utf-8") as f:
-                    transcript = json.load(f)
-                transcript_cached = True
-            except (json.JSONDecodeError, IOError):
-                pass
-
-    # Load clips from database (preferred) or cache file fallback
-    clips = None
-    clips_cached = False
-
-    # Try database first
-    clips_result = await session.execute(
-        select(GeneratedClip).where(GeneratedClip.project_id == project_id).order_by(GeneratedClip.index)
-    )
-    db_clips = clips_result.scalars().all()
-
-    if db_clips:
-        clips = [
-            {
-                "id": c.id,
-                "index": c.index,
-                "title": c.title,
-                "start": c.start_time,
-                "end": c.end_time,
-                "reason": c.reason,
-                "recommendation_reason": c.recommendation_reason,
-                "virality_score": c.virality_score,
-                "brand_alignment": json.loads(c.brand_alignment) if c.brand_alignment else [],
-                "hashtags": json.loads(c.hashtags) if c.hashtags else [],
+        if db_transcript:
+            transcript = {
+                "language": db_transcript.language,
+                "language_probability": db_transcript.language_probability,
+                "duration": db_transcript.duration,
+                "segments": json.loads(db_transcript.segments),
             }
-            for c in db_clips
-        ]
-        clips_cached = True
-    else:
-        # Fallback to cache file
-        clips_path = _clips_cache_path(project.source_path)
-        if os.path.exists(clips_path):
-            try:
-                with open(clips_path, "r", encoding="utf-8") as f:
-                    clips = json.load(f)
-                clips_cached = True
-            except (json.JSONDecodeError, IOError):
-                pass
+            transcript_cached = True
+        else:
+            # Fallback to cache file
+            stem = os.path.splitext(os.path.basename(project.source_path))[0]
+            transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
+            if os.path.exists(transcript_path):
+                try:
+                    with open(transcript_path, "r", encoding="utf-8") as f:
+                        transcript = json.load(f)
+                    transcript_cached = True
+                except (json.JSONDecodeError, IOError):
+                    pass
 
-    return {
-        "project": {
-            "id": project.id,
-            "source_path": project.source_path,
-            "original_source": project.original_source,
-            "original_filename": project.original_filename,
-            "duration": project.duration,
-            "status": project.status,
-        },
-        "transcript": transcript,
-        "transcript_cached": transcript_cached,
-        "clips": clips,
-        "clips_cached": clips_cached,
-    }
+        # Load clips from database (preferred) or cache file fallback
+        clips = None
+        clips_cached = False
+
+        # Try database first
+        clips_result = await session.execute(
+            select(GeneratedClip).where(GeneratedClip.project_id == project_id).order_by(GeneratedClip.index)
+        )
+        db_clips = clips_result.scalars().all()
+
+        if db_clips:
+            clips = [
+                {
+                    "id": c.id,
+                    "index": c.index,
+                    "title": c.title,
+                    "start": c.start_time,
+                    "end": c.end_time,
+                    "reason": c.reason,
+                    "recommendation_reason": c.recommendation_reason,
+                    "virality_score": c.virality_score,
+                    "brand_alignment": json.loads(c.brand_alignment) if c.brand_alignment else [],
+                    "hashtags": json.loads(c.hashtags) if c.hashtags else [],
+                }
+                for c in db_clips
+            ]
+            clips_cached = True
+        else:
+            # Fallback to cache file
+            clips_path = _clips_cache_path(project.source_path)
+            if os.path.exists(clips_path):
+                try:
+                    with open(clips_path, "r", encoding="utf-8") as f:
+                        clips = json.load(f)
+                    clips_cached = True
+                except (json.JSONDecodeError, IOError):
+                    pass
+
+        return {
+            "project": {
+                "id": project.id,
+                "source_path": project.source_path,
+                "original_source": project.original_source,
+                "original_filename": project.original_filename,
+                "duration": project.duration,
+                "status": project.status,
+            },
+            "transcript": transcript,
+            "transcript_cached": transcript_cached,
+            "clips": clips,
+            "clips_cached": clips_cached,
+        }
