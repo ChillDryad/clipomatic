@@ -38,6 +38,7 @@ def detect_device() -> tuple[str, str]:
     """
     try:
         import ctranslate2
+
         if ctranslate2.get_cuda_device_count() > 0:
             return "cuda", "float16"
     except Exception:
@@ -61,7 +62,9 @@ def _fire(callback: Callable | None, fraction: float, label: str) -> None:
         callback(fraction, label)
 
 
-def _split_audio(audio_path: str, chunk_dir: str, chunk_seconds: int = _CHUNK_SECONDS) -> list[tuple[str, float]]:
+def _split_audio(
+    audio_path: str, chunk_dir: str, chunk_seconds: int = _CHUNK_SECONDS
+) -> list[tuple[str, float]]:
     """
     Split a WAV file into fixed-length chunks using ffmpeg segment.
     Returns a list of (chunk_path, start_offset_seconds) tuples in order.
@@ -69,11 +72,16 @@ def _split_audio(audio_path: str, chunk_dir: str, chunk_seconds: int = _CHUNK_SE
     os.makedirs(chunk_dir, exist_ok=True)
     chunk_pattern = os.path.join(chunk_dir, "chunk_%04d.wav")
     cmd = [
-        "ffmpeg", "-y",
-        "-i", audio_path,
-        "-f", "segment",
-        "-segment_time", str(chunk_seconds),
-        "-c", "copy",
+        "ffmpeg",
+        "-y",
+        "-i",
+        audio_path,
+        "-f",
+        "segment",
+        "-segment_time",
+        str(chunk_seconds),
+        "-c",
+        "copy",
         chunk_pattern,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -81,20 +89,29 @@ def _split_audio(audio_path: str, chunk_dir: str, chunk_seconds: int = _CHUNK_SE
         raise RuntimeError(f"ffmpeg audio split failed:\n{result.stderr.strip()}")
 
     chunks = sorted(
-        f for f in os.listdir(chunk_dir) if f.startswith("chunk_") and f.endswith(".wav")
+        f
+        for f in os.listdir(chunk_dir)
+        if f.startswith("chunk_") and f.endswith(".wav")
     )
-    return [(os.path.join(chunk_dir, f), i * chunk_seconds) for i, f in enumerate(chunks)]
+    return [
+        (os.path.join(chunk_dir, f), i * chunk_seconds) for i, f in enumerate(chunks)
+    ]
 
 
 def _extract_audio(video_path: str, audio_path: str) -> None:
     """Extract a 16kHz mono WAV from the video for Whisper."""
     cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_path,
         "-vn",
-        "-acodec", "pcm_s16le",
-        "-ar", "16000",
-        "-ac", "1",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
         audio_path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -173,7 +190,11 @@ def transcribe(
         # --- Chunked transcription for long files ---
         if total_duration > _CHUNK_SECONDS:
             chunk_dir = tempfile.mkdtemp(prefix="momiji_chunks_")
-            _fire(progress_callback, 0.08, f"Audio is {total_duration/3600:.1f}h — splitting into 30-min chunks…")
+            _fire(
+                progress_callback,
+                0.08,
+                f"Audio is {total_duration / 3600:.1f}h — splitting into 30-min chunks…",
+            )
             chunks = _split_audio(_audio_to_transcribe, chunk_dir)
         else:
             chunks = [(_audio_to_transcribe, 0.0)]
@@ -188,22 +209,30 @@ def transcribe(
             partial_key = f"_chunk_{chunk_idx:04d}"
             partial_path = os.path.join(
                 output_dir,
-                f"{os.path.splitext(os.path.basename(os.path.abspath(_audio_to_transcribe)))[0]}{partial_key}.json"
+                f"{os.path.splitext(os.path.basename(os.path.abspath(_audio_to_transcribe)))[0]}{partial_key}.json",
             )
             if os.path.exists(partial_path):
                 with open(partial_path, "r", encoding="utf-8") as pf:
                     partial = json.load(pf)
                 all_segments.extend(partial["segments"])
                 detected_language = partial.get("language", detected_language)
-                language_probability = partial.get("language_probability", language_probability)
+                language_probability = partial.get(
+                    "language_probability", language_probability
+                )
                 chunk_progress = (chunk_idx + 1) / n_chunks
-                _fire(progress_callback, 0.10 + chunk_progress * 0.85,
-                      f"Chunk {chunk_idx + 1}/{n_chunks} loaded from cache…")
+                _fire(
+                    progress_callback,
+                    0.10 + chunk_progress * 0.85,
+                    f"Chunk {chunk_idx + 1}/{n_chunks} loaded from cache…",
+                )
                 continue
 
-            _fire(progress_callback, 0.10 + (chunk_idx / n_chunks) * 0.85,
-                  f"Transcribing chunk {chunk_idx + 1}/{n_chunks} "
-                  f"(starting at {int(offset//60)}:{int(offset%60):02d})…")
+            _fire(
+                progress_callback,
+                0.10 + (chunk_idx / n_chunks) * 0.85,
+                f"Transcribing chunk {chunk_idx + 1}/{n_chunks} "
+                f"(starting at {int(offset // 60)}:{int(offset % 60):02d})…",
+            )
 
             segments_iter, info = model.transcribe(chunk_path, **transcribe_kwargs)
             detected_language = info.language
@@ -215,34 +244,44 @@ def transcribe(
                 words = []
                 if seg.words:
                     for w in seg.words:
-                        words.append({
-                            "word": w.word,
-                            "start": round(w.start + offset, 3),
-                            "end": round(w.end + offset, 3),
-                            "probability": round(w.probability, 4),
-                        })
-                chunk_segments.append({
-                    "start": round(seg.start + offset, 3),
-                    "end": round(seg.end + offset, 3),
-                    "text": seg.text.strip(),
-                    "words": words,
-                })
+                        words.append(
+                            {
+                                "word": w.word,
+                                "start": round(w.start + offset, 3),
+                                "end": round(w.end + offset, 3),
+                                "probability": round(w.probability, 4),
+                            }
+                        )
+                chunk_segments.append(
+                    {
+                        "start": round(seg.start + offset, 3),
+                        "end": round(seg.end + offset, 3),
+                        "text": seg.text.strip(),
+                        "words": words,
+                    }
+                )
                 # Progress within this chunk mapped into its slice of the bar
                 seg_progress = (chunk_idx + seg.end / chunk_duration) / n_chunks
                 elapsed_total = offset + seg.end
-                _fire(progress_callback,
-                      min(0.10 + seg_progress * 0.85, 0.95),
-                      f"Chunk {chunk_idx + 1}/{n_chunks} — "
-                      f"{int(elapsed_total//60)}:{int(elapsed_total%60):02d} / "
-                      f"{int(total_duration//60)}:{int(total_duration%60):02d}")
+                _fire(
+                    progress_callback,
+                    min(0.10 + seg_progress * 0.85, 0.95),
+                    f"Chunk {chunk_idx + 1}/{n_chunks} — "
+                    f"{int(elapsed_total // 60)}:{int(elapsed_total % 60):02d} / "
+                    f"{int(total_duration // 60)}:{int(total_duration % 60):02d}",
+                )
 
             # Save partial progress immediately so a crash doesn't lose this chunk
             with open(partial_path, "w", encoding="utf-8") as pf:
-                json.dump({
-                    "language": detected_language,
-                    "language_probability": language_probability,
-                    "segments": chunk_segments,
-                }, pf, ensure_ascii=False)
+                json.dump(
+                    {
+                        "language": detected_language,
+                        "language_probability": language_probability,
+                        "segments": chunk_segments,
+                    },
+                    pf,
+                    ensure_ascii=False,
+                )
 
             all_segments.extend(chunk_segments)
 
@@ -260,6 +299,7 @@ def transcribe(
         # Clean up chunk wav files (partial JSON progress files are kept for resume)
         if chunk_dir and os.path.isdir(chunk_dir):
             import shutil
+
             shutil.rmtree(chunk_dir, ignore_errors=True)
 
     _fire(progress_callback, 0.97, "Saving transcript…")
@@ -303,6 +343,7 @@ def transcribe_segment(
     device: str = "auto",
     language: str | None = None,
     progress_callback: ProgressCallback = None,
+    source_url: str | None = None,
 ) -> dict:
     """
     Transcribe a specific time window of a video or audio file using faster-whisper.
@@ -342,32 +383,77 @@ def transcribe_segment(
         if audio_path:
             # Stream from existing audio file with a time window
             cmd = [
-                "ffmpeg", "-y",
-                "-ss", str(start),
-                "-i", audio_path,
-                "-t", str(end - start),
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(start),
+                "-i",
+                audio_path,
+                "-t",
+                str(end - start),
                 "-vn",
-                "-acodec", "pcm_s16le",
-                "-ar", "16000",
-                "-ac", "1",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
                 tmp_path,
             ]
         else:
             # Extract from video file
             cmd = [
-                "ffmpeg", "-y",
-                "-ss", str(start),
-                "-i", video_path,
-                "-t", str(end - start),
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(start),
+                "-i",
+                video_path,
+                "-t",
+                str(end - start),
                 "-vn",
-                "-acodec", "pcm_s16le",
-                "-ar", "16000",
-                "-ac", "1",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
                 tmp_path,
             ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            raise RuntimeError(f"ffmpeg segment audio extraction failed:\n{result.stderr.strip()}")
+            # Check if this is a "file not found" error and we have a source URL to redownload
+            if "No such file or directory" in result.stderr and source_url:
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Audio file not found ({audio_path}), redownloading from source..."
+                )
+                _fire(
+                    progress_callback,
+                    0.05,
+                    "Audio file missing - redownloading from source...",
+                )
+
+                # Redownload audio from source URL
+                from pipeline.ingestion import stream_audio_to_file
+
+                stream_audio_to_file(
+                    source_url, audio_path, progress_callback=lambda f, l: None
+                )
+
+                # Retry ffmpeg extraction
+                logger.info(
+                    f"Retrying audio extraction from redownloaded file: {audio_path}"
+                )
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    raise RuntimeError(
+                        f"ffmpeg segment audio extraction failed after redownload:\n{result.stderr.strip()}"
+                    )
+            else:
+                raise RuntimeError(
+                    f"ffmpeg segment audio extraction failed:\n{result.stderr.strip()}"
+                )
 
         _fire(progress_callback, 0.15, f"Loading Whisper model ({model_size})…")
         model = WhisperModel(model_size, device=device, compute_type=compute_type)
@@ -385,19 +471,23 @@ def transcribe_segment(
             words = []
             if seg.words:
                 for w in seg.words:
-                    words.append({
-                        "word": w.word,
-                        # Adjust word timestamps to be relative to the original video
-                        "start": round(w.start + start, 3),
-                        "end": round(w.end + start, 3),
-                        "probability": round(w.probability, 4),
-                    })
-            all_segments.append({
-                "start": round(seg.start + start, 3),
-                "end": round(seg.end + start, 3),
-                "text": seg.text.strip(),
-                "words": words,
-            })
+                    words.append(
+                        {
+                            "word": w.word,
+                            # Adjust word timestamps to be relative to the original video
+                            "start": round(w.start + start, 3),
+                            "end": round(w.end + start, 3),
+                            "probability": round(w.probability, 4),
+                        }
+                    )
+            all_segments.append(
+                {
+                    "start": round(seg.start + start, 3),
+                    "end": round(seg.end + start, 3),
+                    "text": seg.text.strip(),
+                    "words": words,
+                }
+            )
 
         _fire(progress_callback, 0.95, "Done.")
 

@@ -19,7 +19,6 @@ from utils.sse import _sse_response, _sse_stream
 from utils.helpers import _update_project_status
 from pydantic import BaseModel
 from sqlalchemy import select
-from typing import Any as AnyDict
 
 router = APIRouter(prefix="/api/transcribe", tags=["Transcription"])
 
@@ -47,7 +46,9 @@ class TranscribeSegmentRequest(BaseModel):
 async def transcribe(req: TranscribeRequest):
     """Transcribe a video or audio file with SSE progress."""
     if not req.video_path and not req.audio_path:
-        raise HTTPException(status_code=400, detail="Either video_path or audio_path required.")
+        raise HTTPException(
+            status_code=400, detail="Either video_path or audio_path required."
+        )
 
     source_path = req.video_path or req.audio_path
     project_id = req.project_id
@@ -80,31 +81,49 @@ async def transcribe(req: TranscribeRequest):
                     # Write transcript to database if available
                     if result and not error:
                         # Read transcript from cache file
-                        stem = os.path.splitext(os.path.basename(project.source_path))[0]
-                        transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
+                        stem = os.path.splitext(os.path.basename(project.source_path))[
+                            0
+                        ]
+                        transcript_path = os.path.join(
+                            WORKSPACE, f"{stem}_transcript.json"
+                        )
                         if os.path.exists(transcript_path):
                             with open(transcript_path, "r", encoding="utf-8") as f:
                                 transcript_data = json.load(f)
                             # Check if transcript already exists
                             existing = await session.execute(
-                                select(Transcript).where(Transcript.project_id == project_id)
+                                select(Transcript).where(
+                                    Transcript.project_id == project_id
+                                )
                             )
                             transcript_record = existing.scalar_one_or_none()
                             if transcript_record:
                                 # Update existing
-                                transcript_record.language = transcript_data.get("language")
-                                transcript_record.language_probability = transcript_data.get("language_probability")
-                                transcript_record.duration = transcript_data.get("duration")
-                                transcript_record.segments = json.dumps(transcript_data.get("segments", []))
+                                transcript_record.language = transcript_data.get(
+                                    "language"
+                                )
+                                transcript_record.language_probability = (
+                                    transcript_data.get("language_probability")
+                                )
+                                transcript_record.duration = transcript_data.get(
+                                    "duration"
+                                )
+                                transcript_record.segments = json.dumps(
+                                    transcript_data.get("segments", [])
+                                )
                             else:
                                 # Create new
                                 transcript_record = Transcript(
                                     project_id=project_id,
                                     source_path=project.source_path,
                                     language=transcript_data.get("language"),
-                                    language_probability=transcript_data.get("language_probability"),
+                                    language_probability=transcript_data.get(
+                                        "language_probability"
+                                    ),
                                     duration=transcript_data.get("duration"),
-                                    segments=json.dumps(transcript_data.get("segments", [])),
+                                    segments=json.dumps(
+                                        transcript_data.get("segments", [])
+                                    ),
                                 )
                                 session.add(transcript_record)
                     await session.commit()
@@ -126,7 +145,9 @@ async def transcribe(req: TranscribeRequest):
 
 
 @router.get("/cached")
-async def transcribe_cached(path: str = Query(...), user: User = Depends(get_current_user)):
+async def transcribe_cached(
+    path: str = Query(...), user: User = Depends(get_current_user)
+):
     """Return cached transcript JSON for a given video/audio path, or 404."""
     stem = os.path.splitext(os.path.basename(path))[0]
     transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
@@ -142,7 +163,9 @@ class SaveTranscriptRequest(BaseModel):
 
 
 @router.post("/save-cached")
-async def save_cached_transcript(req: SaveTranscriptRequest, user: User = Depends(get_current_user)):
+async def save_cached_transcript(
+    req: SaveTranscriptRequest, user: User = Depends(get_current_user)
+):
     """
     Save a cached transcript to the database for a project.
     Use this when user accepts cached data from a file.
@@ -150,11 +173,15 @@ async def save_cached_transcript(req: SaveTranscriptRequest, user: User = Depend
     async with get_session_cm() as session:
         # Verify project ownership
         result = await session.execute(
-            select(VideoProject).where(VideoProject.id == req.project_id, VideoProject.owner_id == user.id)
+            select(VideoProject).where(
+                VideoProject.id == req.project_id, VideoProject.owner_id == user.id
+            )
         )
         project = result.scalar_one_or_none()
         if not project:
-            raise HTTPException(status_code=404, detail="Project not found or access denied.")
+            raise HTTPException(
+                status_code=404, detail="Project not found or access denied."
+            )
 
         # Check if transcript already exists
         existing = await session.execute(
@@ -165,7 +192,9 @@ async def save_cached_transcript(req: SaveTranscriptRequest, user: User = Depend
         if transcript_record:
             # Update existing
             transcript_record.language = req.transcript.get("language")
-            transcript_record.language_probability = req.transcript.get("language_probability")
+            transcript_record.language_probability = req.transcript.get(
+                "language_probability"
+            )
             transcript_record.duration = req.transcript.get("duration")
             transcript_record.segments = json.dumps(req.transcript.get("segments", []))
         else:
@@ -191,7 +220,25 @@ async def save_cached_transcript(req: SaveTranscriptRequest, user: User = Depend
 async def transcribe_segment(req: TranscribeSegmentRequest):
     """Re-transcribe a specific time window with a chosen Whisper model. SSE progress."""
     if not req.video_path and not req.audio_path:
-        raise HTTPException(status_code=400, detail="Either video_path or audio_path required.")
+        raise HTTPException(
+            status_code=400, detail="Either video_path or audio_path required."
+        )
+
+    # Look up source URL from database if audio_path is provided
+    source_url = None
+    if req.audio_path:
+        async with get_session_cm() as session:
+            result = await session.execute(
+                select(VideoProject).where(VideoProject.source_path == req.audio_path)
+            )
+            project = result.scalar_one_or_none()
+            if (
+                project
+                and project.original_source
+                and project.original_source.startswith(("http://", "https://"))
+            ):
+                source_url = project.original_source
+
     return _sse_response(
         _sse_stream(
             transcription.transcribe_segment,
@@ -202,6 +249,7 @@ async def transcribe_segment(req: TranscribeSegmentRequest):
             model_size=req.model_size,
             device=req.device,
             language=req.language or None,
+            source_url=source_url,
         )
     )
 
