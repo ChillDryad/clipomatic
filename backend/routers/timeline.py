@@ -149,7 +149,6 @@ async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_
     async def generate():
         yield _sse_event({"progress": 0.1, "label": "Running FFmpeg…"})
         try:
-            logger.info(f"Render clip request: caption_style={req.caption_style}, animation_speed={req.animation_speed}, video_path={req.video_path}")
             out_path = await asyncio.to_thread(
                 render_clip,
                 video_path=video_path,
@@ -177,7 +176,6 @@ async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_
                 thumbnail_path=req.thumbnail_path,
             )
             rel = os.path.relpath(out_path, WORKSPACE)
-            logger.info(f"Render complete: {rel}")
             yield _sse_event({"done": True, "result": f"/workspace/{rel}"})
         except Exception as exc:
             logger.exception("Render failed")

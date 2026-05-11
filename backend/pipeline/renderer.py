@@ -615,7 +615,6 @@ def render_clip(
         # but spaces need escaping)
         ass_escaped = _escape_ass_path(ass_path)
 
-        logger.info(f"Starting FFmpeg render: video={video_path}, start={start}, end={end}, layout={layout_mode}")
 
         # ---- Build FFmpeg filtergraph ----
         if layout_mode == "stacked":
@@ -760,17 +759,8 @@ def render_clip(
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
-        # Log full FFmpeg output without truncation
-        logger.info(f"FFmpeg exit code: {result.returncode}")
-        if result.stdout:
-            logger.info(f"FFmpeg stdout:\n{result.stdout}")
-        if result.stderr:
-            logger.info(f"FFmpeg stderr:\n{result.stderr}")
-
         if result.returncode != 0:
             stderr = result.stderr[-3000:]
-            logger.error(f"FFmpeg failed with exit code {result.returncode}")
-            logger.error(f"FFmpeg stderr: {stderr}")
             # Provide actionable error messages for common issues
             if "No such file or directory" in stderr:
                 raise RuntimeError(
@@ -807,8 +797,6 @@ def render_clip(
             raise RuntimeError(
                 f"FFmpeg rendering failed (exit {result.returncode}):\n{stderr}"
             )
-
-        logger.info(f"FFmpeg render successful: {out_path}")
 
     finally:
         if os.path.exists(ass_path):
