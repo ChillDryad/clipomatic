@@ -76,7 +76,16 @@ export function ClipList({
 	);
 
 	const getRenderState = (clipId: string): RenderState => {
-		return renderState[clipId] || DEFAULT_RENDER_STATE;
+		const state = renderState[clipId];
+		if (state) return state;
+		// Return default state with crops scaled to actual video dimensions
+		return {
+			...DEFAULT_RENDER_STATE,
+			cropBoxes: {
+				gameplay: { x: 0, y: 0, w: Math.round(videoDimensions.w * 0.70), h: videoDimensions.h },
+				avatar: { x: Math.round(videoDimensions.w * 0.72), y: Math.round(videoDimensions.h * 0.55), w: Math.round(videoDimensions.w * 0.27), h: Math.round(videoDimensions.h * 0.43) },
+			},
+		};
 	};
 
 	const updateRenderState = (clipId: string, patch: Partial<RenderState>) => {
@@ -169,14 +178,23 @@ export function ClipList({
 			setEditingClipId(null);
 			const clip = clips.find((c) => getClipKey(c) === clipId);
 			const clipHasCrops = clip?.crop_avatar || clip?.crop_game;
-			if (clipHasCrops && !renderState[clipId]) {
-				updateRenderState(clipId, {
-					cropBoxes: {
-						gameplay:
-							clip!.crop_game || DEFAULT_RENDER_STATE.cropBoxes.gameplay,
-						avatar: clip!.crop_avatar || DEFAULT_RENDER_STATE.cropBoxes.avatar,
-					},
-				});
+			if (!renderState[clipId]) {
+				if (clipHasCrops) {
+					updateRenderState(clipId, {
+						cropBoxes: {
+							gameplay: clip!.crop_game || DEFAULT_RENDER_STATE.cropBoxes.gameplay,
+							avatar: clip!.crop_avatar || DEFAULT_RENDER_STATE.cropBoxes.avatar,
+						},
+					});
+				} else {
+					// Initialize crops based on actual video dimensions
+					updateRenderState(clipId, {
+						cropBoxes: {
+							gameplay: { x: 0, y: 0, w: Math.round(videoDimensions.w * 0.70), h: videoDimensions.h },
+							avatar: { x: Math.round(videoDimensions.w * 0.72), y: Math.round(videoDimensions.h * 0.55), w: Math.round(videoDimensions.w * 0.27), h: Math.round(videoDimensions.h * 0.43) },
+						},
+					});
+				}
 			}
 		}
 	};
@@ -224,9 +242,9 @@ export function ClipList({
 				const segMatch = sourcePath.match(/_seg_([\d.]+)\./);
 				segStartTime = segMatch ? parseFloat(segMatch[1]) : 0;
 				segPath = sourcePath;
-				// Keep clip timestamps absolute - segments will be offset to match
-				renderStart = clip.start;
-				renderEnd = clip.end;
+				// Convert clip timestamps to be relative to the segment file
+				renderStart = clip.start - segStartTime;
+				renderEnd = clip.end - segStartTime;
 			} else if (isVideoFile) {
 				segPath = sourcePath;
 				renderStart = clip.start;
