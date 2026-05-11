@@ -53,7 +53,7 @@ This document outlines a comprehensive plan to enhance the clipomatic subtitle s
 
 ## Phase 1: Backend Enhancement — Advanced Animation Styles
 
-### 1.1 Add New Animation Style Options
+### 1.1 Add New Animation Style Options [**COMPLETED**]
 
 **File:** `backend/pipeline/renderer.py`
 
@@ -226,16 +226,7 @@ _STYLE_PRESETS = {
         "outline": "&H00000000",
         "outline_width": 5.0,
         "margin_v": 260,
-    },
-    "mrbeast": {
-        "font": "Impact",
-        "size": 96,
-        "primary": "&H0000FFFF",
-        "highlight": "&H000000FF",
-        "outline": "&H00000000",
-        "outline_width": 8.0,
-        "margin_v": 200,
-    },
+    }
 }
 ```
 

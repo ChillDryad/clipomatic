@@ -195,6 +195,7 @@ export function ClipList({
 			let segPath: string;
 			let renderStart: number;
 			let renderEnd: number;
+			let segStartTime: number | undefined;
 
 			const isUrl =
 				originalSource?.startsWith("http://") ||
@@ -221,11 +222,11 @@ export function ClipList({
 				// Segment file - extract the segment start time from filename
 				// Format: <id>_seg_<section_start>.<ext>
 				const segMatch = sourcePath.match(/_seg_([\d.]+)\./);
-				const segStartTime = segMatch ? parseFloat(segMatch[1]) : 0;
+				segStartTime = segMatch ? parseFloat(segMatch[1]) : 0;
 				segPath = sourcePath;
-				// Adjust clip timestamps to be relative to segment start
-				renderStart = clip.start - segStartTime;
-				renderEnd = clip.end - segStartTime;
+				// Keep clip timestamps absolute - segments will be offset to match
+				renderStart = clip.start;
+				renderEnd = clip.end;
 			} else if (isVideoFile) {
 				segPath = sourcePath;
 				renderStart = clip.start;
@@ -261,17 +262,22 @@ export function ClipList({
 				}
 			}
 
-			// Offset segments to be relative to the render start time
-			// The video file starts at renderStart, so segment timestamps need to be shifted
+			// Offset segments to be relative to the video file's start time
+			// For segment files, offset by the segment's absolute start time
+			// For full video files, offset by clip.start (segments display relative to clip window)
+			const offsetBase = isSegmentFile && segStartTime
+				? segStartTime
+				: clip.start;
+
 			if (segments.length > 0) {
 				segments = segments.map((s) => ({
 					...s,
-					start: s.start - clip.start,
-					end: s.end - clip.start,
+					start: s.start - offsetBase,
+					end: s.end - offsetBase,
 					words: s.words?.map((w) => ({
 						...w,
-						start: w.start - clip.start,
-						end: w.end - clip.start,
+						start: w.start - offsetBase,
+						end: w.end - offsetBase,
 					})) || [],
 				}));
 			}
