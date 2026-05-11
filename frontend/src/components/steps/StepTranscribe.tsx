@@ -43,7 +43,7 @@ export function StepTranscribe() {
           audio_path: source.audioPath ?? undefined,
           model_size: config.whisperModel,
           device: config.whisperDevice,
-          language: undefined,
+          language: 'en',
           project_id: projectId ?? undefined,
         },
         (value, label) => setProgress({ value, label }),

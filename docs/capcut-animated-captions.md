@@ -665,7 +665,7 @@ export interface RenderSettings {
     <option value="typewriter">Typewriter</option>
     <option value="scale_pulse">Pulse</option>
   </select>
-</div>;
+</div>
 ```
 
 ---
@@ -806,7 +806,6 @@ describe('ClipSectionSubtitles', () => {
 **Test Scenarios:**
 
 1. **Pop Animation Render Test**
-
    ```bash
    # Render clip with pop animation
    # Verify ASS contains \fscx/\fscy scale tags
@@ -814,7 +813,6 @@ describe('ClipSectionSubtitles', () => {
    ```
 
 2. **Emoji Support Test**
-
    ```bash
    # Render clip with emoji text "This is FIRE 🔥"
    # Verify ASS contains \fnSegoe UI Emoji tags
@@ -822,7 +820,6 @@ describe('ClipSectionSubtitles', () => {
    ```
 
 3. **Gaming Color Scheme Test**
-
    ```bash
    # Apply gaming color scheme
    # Verify ASS contains yellow primary (&H0000FFFF)

@@ -107,6 +107,7 @@ class RenderClipRequest(BaseModel):
     words_per_line: int | None = None
     quality_preset: str | None = None
     layout_mode: str = "stacked"
+    animation_speed: str | None = None
     thumbnail_path: str | None = None
 
 
@@ -148,6 +149,7 @@ async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_
     async def generate():
         yield _sse_event({"progress": 0.1, "label": "Running FFmpeg…"})
         try:
+            logger.info(f"Render clip request: caption_style={req.caption_style}, animation_speed={req.animation_speed}, video_path={req.video_path}")
             out_path = await asyncio.to_thread(
                 render_clip,
                 video_path=video_path,
@@ -171,9 +173,11 @@ async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_
                 words_per_line=req.words_per_line,
                 quality_preset=req.quality_preset,
                 layout_mode=req.layout_mode,
+                animation_speed=req.animation_speed,
                 thumbnail_path=req.thumbnail_path,
             )
             rel = os.path.relpath(out_path, WORKSPACE)
+            logger.info(f"Render complete: {rel}")
             yield _sse_event({"done": True, "result": f"/workspace/{rel}"})
         except Exception as exc:
             logger.exception("Render failed")
@@ -304,6 +308,7 @@ async def render_preview_endpoint(req: RenderClipRequest, user: User = Depends(g
                 words_per_line=req.words_per_line,
                 quality_preset="fast",
                 layout_mode=req.layout_mode,
+                animation_speed=req.animation_speed,
                 output_width=540,
                 output_height=960,
                 thumbnail_path=req.thumbnail_path,

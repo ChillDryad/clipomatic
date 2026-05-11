@@ -14,6 +14,7 @@ interface ClipSectionSubtitlesProps {
   outlineWidth: number;
   fontSize: number;
   captionStyle: string;
+  animationSpeed: 'fast' | 'normal' | 'slow';
   qualityPreset: string;
   nvencAvailable: boolean;
   onUpdate: (patch: Record<string, unknown>) => void;
@@ -32,6 +33,7 @@ export function ClipSectionSubtitles({
   outlineWidth,
   fontSize,
   captionStyle,
+  animationSpeed,
   qualityPreset,
   nvencAvailable,
   onUpdate,
@@ -159,30 +161,58 @@ export function ClipSectionSubtitles({
             />
           </label>
         </div>
-        <div className="flex gap-4 mt-3">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="caption-style"
-              value="karaoke"
-              checked={captionStyle === "karaoke"}
-              onChange={() => update({ captionStyle: "karaoke" })}
-              className="accent-[var(--ctp-mauve)]"
-            />
-            <span className="text-xs text-[var(--ctp-text)]">Karaoke (sweep)</span>
+        <div className="space-y-2 mt-3">
+          <label className="text-xs font-medium text-[var(--ctp-text)]">
+            Caption Style
           </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="caption-style"
-              value="capcut"
-              checked={captionStyle === "capcut"}
-              onChange={() => update({ captionStyle: "capcut" })}
-              className="accent-[var(--ctp-mauve)]"
-            />
-            <span className="text-xs text-[var(--ctp-text)]">CapCut (uniform)</span>
-          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { value: "karaoke", label: "Karaoke", desc: "Color sweep" },
+              { value: "capcut", label: "CapCut", desc: "Solid highlight" },
+              { value: "pop", label: "Pop", desc: "Word bounce in" },
+              { value: "bounce", label: "Bounce", desc: "From below" },
+            ].map((style) => (
+              <button
+                key={style.value}
+                onClick={() => update({ captionStyle: style.value })}
+                className={`p-2 rounded border text-left ${
+                  captionStyle === style.value
+                    ? "border-[var(--ctp-mauve)] bg-[var(--ctp-surface-2)]"
+                    : "border-[var(--ctp-overlay)] hover:border-[var(--ctp-subtext)]"
+                }`}
+              >
+                <div className="text-xs font-medium">{style.label}</div>
+                <div className="text-[10px] text-[var(--ctp-subtext)]">
+                  {style.desc}
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Animation Speed — only show for pop/bounce styles */}
+        {(captionStyle === "pop" || captionStyle === "bounce") && (
+          <div className="space-y-2 mt-3">
+            <label className="text-xs font-medium text-[var(--ctp-text)]">
+              Animation Speed
+            </label>
+            <div className="flex gap-2">
+              {(["fast", "normal", "slow"] as const).map((speed) => (
+                <button
+                  key={speed}
+                  onClick={() => update({ animationSpeed: speed })}
+                  className={`flex-1 py-1.5 rounded text-xs capitalize ${
+                    animationSpeed === speed
+                      ? "bg-[var(--ctp-mauve)] text-[var(--ctp-base)]"
+                      : "bg-[var(--ctp-surface-1)] text-[var(--ctp-subtext)]"
+                  }`}
+                >
+                  {speed}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="flex gap-4 mt-3">
           <label className="flex items-center gap-2 cursor-pointer">
             <input

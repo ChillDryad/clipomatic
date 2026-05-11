@@ -122,6 +122,7 @@ function ClipCard({
   const [subtitleFadeIn, setSubtitleFadeIn] = useState(100)
   const [subtitleFadeOut, setSubtitleFadeOut] = useState(100)
   const [captionStyle, setCaptionStyle] = useState("capcut")
+  const [animationSpeed, setAnimationSpeed] = useState<'fast' | 'normal' | 'slow'>("normal")
   const [wordsPerLine, setWordsPerLine] = useState(1)
   const [qualityPreset, setQualityPreset] = useState("standard")
   const [layoutMode, setLayoutMode] = useState("stacked")
@@ -262,6 +263,7 @@ function ClipCard({
           end,
           model_size: improveModel,
           device: 'auto',
+          language: 'en',
         },
         (value, label) => setImproveProgress({ value, label }),
       )
@@ -361,6 +363,7 @@ function ClipCard({
             words_per_line: wordsPerLine,
             quality_preset: qualityPreset,
             layout_mode: layoutMode,
+            animation_speed: animationSpeed,
           },
           (value, label) => setRenderProgress({ value: 0.4 + value * 0.6, label }),
           controller.signal,
@@ -398,6 +401,7 @@ function ClipCard({
             words_per_line: wordsPerLine,
             quality_preset: qualityPreset,
             layout_mode: layoutMode,
+            animation_speed: animationSpeed,
           },
           (value, label) => setRenderProgress({ value, label }),
           controller.signal,
@@ -778,16 +782,51 @@ function ClipCard({
 
         {/* Caption style toggle */}
         <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest pt-2 border-t border-[var(--ctp-overlay)]">Caption Style</p>
-        <div className="flex gap-4">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name={`caption-style-${idx}`} value="karaoke" checked={captionStyle === "karaoke"} onChange={() => setCaptionStyle("karaoke")} className="accent-[var(--ctp-mauve)]" />
-            <span className="text-xs text-[var(--ctp-text)]">Karaoke (sweep)</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name={`caption-style-${idx}`} value="capcut" checked={captionStyle === "capcut"} onChange={() => setCaptionStyle("capcut")} className="accent-[var(--ctp-mauve)]" />
-            <span className="text-xs text-[var(--ctp-text)]">CapCut (uniform)</span>
-          </label>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { value: "karaoke", label: "Karaoke", desc: "Color sweep" },
+            { value: "capcut", label: "CapCut", desc: "Solid highlight" },
+            { value: "pop", label: "Pop", desc: "Word bounce in" },
+            { value: "bounce", label: "Bounce", desc: "From below" },
+          ].map((style) => (
+            <button
+              key={style.value}
+              onClick={() => setCaptionStyle(style.value)}
+              className={`p-2 rounded border text-left ${
+                captionStyle === style.value
+                  ? "border-[var(--ctp-mauve)] bg-[var(--ctp-surface-2)]"
+                  : "border-[var(--ctp-overlay)] hover:border-[var(--ctp-subtext)]"
+              }`}
+            >
+              <div className="text-xs font-medium">{style.label}</div>
+              <div className="text-[10px] text-[var(--ctp-subtext)]">
+                {style.desc}
+              </div>
+            </button>
+          ))}
         </div>
+
+        {/* Animation Speed — only show for pop/bounce styles */}
+        {(captionStyle === "pop" || captionStyle === "bounce") && (
+          <>
+            <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest pt-2 border-t border-[var(--ctp-overlay)]">Animation Speed</p>
+            <div className="flex gap-2">
+              {(["fast", "normal", "slow"] as const).map((speed) => (
+                <button
+                  key={speed}
+                  onClick={() => setAnimationSpeed(speed)}
+                  className={`flex-1 py-1.5 rounded text-xs capitalize ${
+                    animationSpeed === speed
+                      ? "bg-[var(--ctp-mauve)] text-[var(--ctp-base)]"
+                      : "bg-[var(--ctp-surface-1)] text-[var(--ctp-subtext)]"
+                  }`}
+                >
+                  {speed}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* Words per line */}
         <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest pt-2 border-t border-[var(--ctp-overlay)]">Words Per Line</p>

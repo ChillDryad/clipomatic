@@ -154,6 +154,7 @@ export function VideoProjectPage() {
           video_path: project.source_path,
           model_size: selectedWhisperModel,
           device: "auto",
+          language: "en",
           project_id: projectId,
         },
         (value, label) => setTranscribeProgress({ value, label }),

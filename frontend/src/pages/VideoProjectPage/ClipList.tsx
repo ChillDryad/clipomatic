@@ -10,6 +10,7 @@ import {
 	cancelOperation,
 	transcribeSegment,
 	getVideoDimensions,
+	getCachedTranscript,
 } from "../../api";
 import type { Clip, CropBox, Transcript } from "../../types";
 import { formatTime } from "../../utils/format";
@@ -240,13 +241,48 @@ export function ClipList({
 				progress: { value: 0.4, label: "Rendering clip..." },
 			});
 
+			// Get segments from improved transcript or cached transcript
+			const improvedKey = `${sourcePath}___${clip.start}___${clip.end}`;
+			const improvedTranscript = improvedSegments.get(improvedKey);
+			let segments = improvedTranscript?.segments || [];
+
+			// If no improved transcript, try to get cached transcript for the whole video
+			if (segments.length === 0) {
+				try {
+					const cachedTranscript = await getCachedTranscript(sourcePath);
+						if (cachedTranscript?.segments) {
+						// Filter segments that overlap with clip window (more permissive)
+						segments = cachedTranscript.segments.filter(
+							(s) => s.start < clip.end && s.end > clip.start
+						);
+					}
+				} catch (e) {
+					console.error("Could not fetch cached transcript:", e);
+				}
+			}
+
+			// Offset segments to be relative to the render start time
+			// The video file starts at renderStart, so segment timestamps need to be shifted
+			if (segments.length > 0) {
+				segments = segments.map((s) => ({
+					...s,
+					start: s.start - clip.start,
+					end: s.end - clip.start,
+					words: s.words?.map((w) => ({
+						...w,
+						start: w.start - clip.start,
+						end: w.end - clip.start,
+					})) || [],
+				}));
+			}
+
 			const outUrl = await renderClip(
 				{
 					video_path: segPath,
 					clip: { ...clip, start: renderStart, end: renderEnd },
 					crop_avatar: state.cropBoxes.avatar,
 					crop_game: state.cropBoxes.gameplay,
-					segments: [],
+					segments,
 					font_name: state.fontName,
 					font_color: state.fontColor,
 					highlight_color: state.highlightColor,
@@ -262,6 +298,7 @@ export function ClipList({
 					words_per_line: state.wordsPerLine,
 					quality_preset: state.qualityPreset,
 					layout_mode: state.layoutMode,
+					animation_speed: state.animationSpeed,
 				},
 				(value, label) =>
 					updateRenderState(clipKey, {
@@ -334,6 +371,7 @@ export function ClipList({
 					end: clip.end,
 					model_size: model,
 					device: "auto",
+					language: "en",
 				},
 				(value, label) =>
 					setImproveProgress((prev) => ({
@@ -515,7 +553,10 @@ export function ClipList({
 								nvencAvailable={nvencAvailable}
 								hasImprovedTranscript={hasImprovedTranscript}
 								improveProgress={improveProgress[clipKey] ?? null}
-								improveModel={improveModel[clipKey] ?? "large-v3"}
+								improveModel={improveModel}
+									onImproveModelChange={(clipKey, model) => {
+										setImproveModel((prev) => ({ ...prev, [clipKey]: model }));
+									}}
 								onImproveSubtitles={handleImproveSubtitles}
 								projectId={projectId}
 								onClipUpdate={onClipUpdate}

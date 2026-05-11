@@ -58,6 +58,7 @@ export const DEFAULT_RENDER_STATE = {
   wordsPerLine: 1,
   qualityPreset: "standard",
   layoutMode: "stacked",
+  animationSpeed: "normal" as const,
 };
 
 export type RenderState = typeof DEFAULT_RENDER_STATE;

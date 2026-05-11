@@ -217,11 +217,10 @@ class TestBuildAssWordByWord:
     def test_word_by_word_contains_karaoke(self, segment_with_words):
         """Test that word-by-word build includes karaoke effects."""
         ass_content = _build_ass_word_by_word(
-            {"start": 0, "end": 10},
-            segment_with_words,
-            1920,
-            1080,
-            caption_style="karaoke"
+            segments=[segment_with_words],
+            clip_start=0,
+            clip_end=10,
+            caption_style="karaoke",
         )
         # Karaoke style uses \\k for timing
         assert "\\k" in ass_content or "Dialogue:" in ass_content
@@ -229,21 +228,74 @@ class TestBuildAssWordByWord:
     def test_word_by_word_capcut_style(self, segment_with_words):
         """Test CapCut caption style."""
         ass_content = _build_ass_word_by_word(
-            {"start": 0, "end": 10},
-            segment_with_words,
-            1920,
-            1080,
-            caption_style="capcut"
+            segments=[segment_with_words],
+            clip_start=0,
+            clip_end=10,
+            caption_style="capcut",
         )
         assert "Dialogue:" in ass_content
+
+    def test_pop_animation_generates_scale_tags(self, segment_with_words):
+        """Test pop animation uses scale tags with correct timing."""
+        ass_content = _build_ass_word_by_word(
+            [{"start": 0, "end": 5, "text": "Hello world test", "words": [
+                {"word": "Hello", "start": 0, "end": 1},
+            ]}],
+            clip_start=0,
+            clip_end=10,
+            caption_style="pop",
+            animation_speed="normal",
+        )
+        # Pop animation uses \\fscx/\\fscy for scale effect
+        assert "\\fscx50\\fscy50" in ass_content
+        assert "\\t(0,80,\\fscx115\\fscy115)" in ass_content
+        assert "\\t(80,180,\\fscx100\\fscy100)" in ass_content
+
+    def test_bounce_animation_uses_move_tag(self, segment_with_words):
+        """Test bounce animation uses \\move with correct coordinates."""
+        ass_content = _build_ass_word_by_word(
+            [{"start": 0, "end": 5, "text": "Hello world test", "words": [
+                {"word": "Hello", "start": 0, "end": 1},
+            ]}],
+            clip_start=0,
+            clip_end=10,
+            caption_style="bounce",
+            animation_speed="normal",
+        )
+        # Bounce animation uses \\move from below
+        assert "\\move(540,1100,540,960)" in ass_content
+
+    def test_animation_speed_affects_duration(self, segment_with_words):
+        """Test that animation speed changes timing."""
+        fast_content = _build_ass_word_by_word(
+            [{"start": 0, "end": 5, "text": "Test", "words": [
+                {"word": "Test", "start": 0, "end": 1},
+            ]}],
+            clip_start=0,
+            clip_end=10,
+            caption_style="pop",
+            animation_speed="fast",
+        )
+        slow_content = _build_ass_word_by_word(
+            [{"start": 0, "end": 5, "text": "Test", "words": [
+                {"word": "Test", "start": 0, "end": 1},
+            ]}],
+            clip_start=0,
+            clip_end=10,
+            caption_style="pop",
+            animation_speed="slow",
+        )
+        # Fast should have shorter duration values than slow
+        # Fast: \\t(80,120,...) vs Slow: \\t(80,250,...)
+        assert "\\t(80,120," in fast_content or "120" in fast_content
+        assert "\\t(80,250," in slow_content or "250" in slow_content
 
     def test_word_by_word_positioning(self, segment_with_words):
         """Test that subtitles include positioning."""
         ass_content = _build_ass_word_by_word(
-            {"start": 0, "end": 10},
-            segment_with_words,
-            1920,
-            1080
+            segments=[segment_with_words],
+            clip_start=0,
+            clip_end=10,
         )
         # Should include \\pos tag for positioning
         assert "\\pos" in ass_content or "Dialogue:" in ass_content

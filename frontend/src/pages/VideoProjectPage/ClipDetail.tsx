@@ -43,8 +43,9 @@ interface ClipDetailProps {
   videoDimensions: { w: number; h: number };
   hasImprovedTranscript: boolean;
   improveProgress: { value: number; label: string } | null;
-  improveModel: string;
+  improveModel: Record<string, string>;
   onImproveSubtitles: (clip: Clip, clipKey: string) => Promise<void>;
+  onImproveModelChange: (clipKey: string, model: string) => void;
   projectId: string;
   onClipUpdate: (clipKey: string, updated: Clip) => void;
   onSaveTiming: (clipIndex: number, patch: Partial<Clip>) => void;
@@ -74,6 +75,7 @@ export function ClipDetail({
   hasImprovedTranscript,
   improveProgress,
   improveModel,
+  onImproveModelChange,
   onImproveSubtitles,
   projectId,
   onClipUpdate,
@@ -163,8 +165,8 @@ export function ClipDetail({
           <ClipSectionSubtitles
             hasImprovedTranscript={hasImprovedTranscript}
             progress={improveProgress}
-            model={improveModel}
-            onModelChange={(model) => updateRenderState(clipKey, {})}
+            model={improveModel[clipKey] || "large-v3"}
+            onModelChange={(model) => onImproveModelChange(clipKey, model)}
             onImprove={() => onImproveSubtitles(clip, clipKey)}
             fontName={state.fontName}
             fontColor={state.fontColor}
@@ -173,6 +175,7 @@ export function ClipDetail({
             outlineWidth={state.outlineWidth}
             fontSize={state.fontSize}
             captionStyle={state.captionStyle}
+            animationSpeed={state.animationSpeed || 'normal'}
             qualityPreset={state.qualityPreset}
             nvencAvailable={nvencAvailable}
             onUpdate={handleStyleUpdate}

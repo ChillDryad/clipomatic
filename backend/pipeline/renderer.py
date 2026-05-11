@@ -2,6 +2,7 @@
 Renderer — builds ASS subtitle files and runs the FFmpeg stacked-layout filtergraph.
 """
 
+import logging
 import os
 import re
 import subprocess
@@ -10,6 +11,8 @@ import uuid
 from dataclasses import dataclass
 
 from pipeline.media import extract_frame, get_video_dimensions  # noqa: F401 — re-exported for api.py
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -199,6 +202,54 @@ def _ass_style_header(
     )
 
 
+# ---------------------------------------------------------------------------
+# Animation style generators (Phase 1: pop, bounce)
+# ---------------------------------------------------------------------------
+
+
+def _generate_pop_animation(word: str, duration_ms: int = 180) -> str:
+    """
+    Pop animation: scale 50% → 115% → 100%
+
+    ASS tags:
+    - \\fscx/\\fscy: Font scale X/Y
+    - \\t(start,end,transform): Animate over milliseconds
+
+    Example: {\\fscx50\\fscy50\\t(0,80,\\fscx115\\fscy115)\\t(80,180,\\fscx100\\fscy100)}Word
+    """
+    return f"{{\\fscx50\\fscy50\\t(0,80,\\fscx115\\fscy115)\\t(80,{duration_ms},\\fscx100\\fscy100)}}{word}"
+
+
+def _generate_bounce_animation(word: str, duration_ms: int = 280) -> str:
+    """
+    Bounce from below with overshoot
+
+    ASS tags:
+    - \\move(x1,y1,x2,y2): Move from (x1,y1) to (x2,y2)
+    - \\t(): Scale overshoot (115% → 95% → 100%)
+
+    Example: {\\move(540,1100,540,960)\\t(0,120,\\fscx115\\fscy115)\\t(120,200,\\fscx95\\fscy95)\\t(200,280,\\fscx100\\fscy100)}Word
+    """
+    # Calculate timing phases for overshoot effect
+    phase1 = int(duration_ms * 0.43)  # ~120ms for initial bounce
+    phase2 = int(duration_ms * 0.71)  # ~200ms for first overshoot
+    phase3 = duration_ms              # ~280ms for settle
+
+    return (
+        f"{{\\move(540,1100,540,960)"
+        f"\\t(0,{phase1},\\fscx115\\fscy115)"
+        f"\\t({phase1},{phase2},\\fscx95\\fscy95)"
+        f"\\t({phase2},{phase3},\\fscx100\\fscy100)}}{word}"
+    )
+
+
+_SPEED_MAP = {
+    "fast": {"pop_duration": 120, "bounce_duration": 200},
+    "normal": {"pop_duration": 180, "bounce_duration": 280},
+    "slow": {"pop_duration": 250, "bounce_duration": 400},
+}
+
+
 def _build_ass_word_by_word(
     segments: list[dict],
     clip_start: float,
@@ -217,6 +268,7 @@ def _build_ass_word_by_word(
     caption_style: str = "karaoke",
     words_per_line: int = 1,
     layout_mode: str = "stacked",
+    animation_speed: str | None = None,
 ) -> str:
     """
     Generate an ASS subtitle file with CapCut-style per-word karaoke.
@@ -229,6 +281,10 @@ def _build_ass_word_by_word(
     - "karaoke" (default): uses \\kf for animated sweep fill highlight
     - "capcut": uses solid highlight — the word appears instantly highlighted
       with no sweep animation, using \\c to switch to highlight color
+    - "pop": words bounce in with scale animation (50% → 115% → 100%)
+    - "bounce": words bounce up from below frame with overshoot
+
+    animation_speed: "fast", "normal", or "slow" — affects pop/bounce duration
 
     A short fade-in softens word entrance. No fade-out within the word's window —
     the next word's line simply replaces it cleanly.
@@ -280,21 +336,38 @@ def _build_ass_word_by_word(
 
     if words_per_line <= 1:
         # One word per line mode
+        # Default to "normal" if animation_speed is None or invalid
+        speed_config = _SPEED_MAP.get(animation_speed or "normal", _SPEED_MAP["normal"])
+
         for i, (t0, t1, text) in enumerate(words_out):
             if t1 <= t0:
                 continue
+            # Each word displays for its natural duration, with a minimum of 0.2s
+            # and extends slightly past the next word's start for smoother reading
+            word_duration = t1 - t0
             if i + 1 < len(words_out):
                 next_t0 = words_out[i + 1][0]
-                t_end = max(next_t0, t0 + 0.01)
+                # End at next word start, but ensure minimum display time
+                t_end = max(next_t0, t0 + max(word_duration, 0.2))
             else:
-                t_end = t1
+                # Last word: add extra display time
+                t_end = t1 + 0.3
 
-            fade_tag = f"{{\\fad({fade_in_ms},0)}}"
+            # Fade in/out: quick fade in, noticeable fade out
+            fade_out_ms = 150
+            fade_tag = f"{{\\fad({fade_in_ms},{fade_out_ms})}}"
 
             if caption_style == "capcut":
                 ass_highlight = _hex_to_ass(highlight_color)
                 dialogue_text = f"{{\\c{ass_highlight}}}{text}"
+            elif caption_style == "pop":
+                pop_dur = speed_config["pop_duration"]
+                dialogue_text = _generate_pop_animation(text, pop_dur)
+            elif caption_style == "bounce":
+                bounce_dur = speed_config["bounce_duration"]
+                dialogue_text = _generate_bounce_animation(text, bounce_dur)
             else:
+                # Default karaoke style
                 kf_dur = max(1, round((t1 - t0) * 100))
                 dialogue_text = f"{{\\kf{kf_dur}}}{text}"
 
@@ -320,31 +393,29 @@ def _build_ass_word_by_word(
                 i += words_per_line
                 continue
 
-            fade_tag = f"{{\\fad({fade_in_ms},0)}}"
+            # Fade in/out: quick fade in, noticeable fade out
+            fade_out_ms = 150
+            fade_tag = f"{{\\fad({fade_in_ms},{fade_out_ms})}}"
+
+            # Common positioning for multi-word line
+            base_x = 540  # Center of 1080 width output
+            word_spacing = 60  # Approximate pixels per word
+            start_offset = -((len(group) - 1) * word_spacing) / 2
+            pos_y = 50 if layout_mode in ("camera_only", "gameplay_only") else 950
 
             if caption_style == "capcut":
-                # For CapCut style with multi-word lines, each word needs its own
-                # Dialogue event with proper timing so they highlight individually.
-                # We use \pos to place words horizontally on the same visual line.
                 ass_highlight = _hex_to_ass(highlight_color)
-                base_x = 540  # Center of 1080 width output
-                word_spacing = 60  # Approximate pixels per word
-                start_offset = -((len(group) - 1) * word_spacing) / 2
-
                 for wi, (w_t0, w_t1, w_text) in enumerate(group):
                     if w_t1 <= w_t0:
                         continue
-                    # Determine when this word should disappear (next word's start or end of group)
+                    # Each word displays for its natural duration with minimum 0.2s
+                    word_duration = w_t1 - w_t0
                     if wi + 1 < len(group):
-                        w_end = max(group[wi + 1][0], w_t0 + 0.01)
+                        w_end = max(group[wi + 1][0], w_t0 + max(word_duration, 0.2))
                     else:
-                        w_end = w_t1
+                        w_end = w_t1 + 0.3
 
                     pos_x = base_x + start_offset + wi * word_spacing
-                    # Position in upper 25% for camera_only/gameplay_only, otherwise default
-                    pos_y = (
-                        50 if layout_mode in ("camera_only", "gameplay_only") else 950
-                    )
                     word_tag = f"{{\\pos({pos_x},{pos_y})\\c{ass_highlight}}}{w_text}"
 
                     lines.append(
@@ -352,8 +423,38 @@ def _build_ass_word_by_word(
                         f"{_seconds_to_ass_time(w_end)},Default,,0,0,0,,"
                         f"{fade_tag}{word_tag}\n"
                     )
+
+            elif caption_style in ("pop", "bounce"):
+                # Each word animates independently at its own timestamp
+                # Default to "normal" if animation_speed is None or invalid
+                speed_config = _SPEED_MAP.get(animation_speed or "normal", _SPEED_MAP["normal"])
+                for wi, (w_t0, w_t1, w_text) in enumerate(group):
+                    if w_t1 <= w_t0:
+                        continue
+                    # Each word displays for its natural duration with minimum 0.2s
+                    word_duration = w_t1 - w_t0
+                    if wi + 1 < len(group):
+                        w_end = max(group[wi + 1][0], w_t0 + max(word_duration, 0.2))
+                    else:
+                        w_end = w_t1 + 0.3
+
+                    pos_x = base_x + start_offset + wi * word_spacing
+
+                    if caption_style == "pop":
+                        pop_dur = speed_config["pop_duration"]
+                        word_tag = _generate_pop_animation(w_text, pop_dur)
+                    else:
+                        bounce_dur = speed_config["bounce_duration"]
+                        word_tag = _generate_bounce_animation(w_text, bounce_dur)
+
+                    lines.append(
+                        f"Dialogue: 0,{_seconds_to_ass_time(w_t0)},"
+                        f"{_seconds_to_ass_time(w_end)},Default,,0,0,0,,"
+                        f"{fade_tag}{{\\pos({pos_x},{pos_y})}}{word_tag}\n"
+                    )
+
             else:
-                # Karaoke style - keep the original grouped approach
+                # Karaoke style - grouped approach (single Dialogue line per word group)
                 text_parts = []
                 for w_t0, w_t1, w_text in group:
                     kf_dur = max(1, round((w_t1 - w_t0) * 100))
@@ -401,14 +502,17 @@ def render_clip(
     words_per_line: int = 1,
     quality_preset: str = "standard",
     layout_mode: str = "stacked",
+    animation_speed: str = "normal",
     thumbnail_path: str | None = None,
     thumbnail_duration: float = 5.0,
 ) -> str:
     """
     Render a single clip to a 9:16 vertical MP4 with per-word karaoke subtitles.
 
-    caption_style: "karaoke" for sweep highlight, "capcut" for solid highlight.
+    caption_style: "karaoke" for sweep highlight, "capcut" for solid highlight,
+                   "pop" for word bounce in, "bounce" for words bouncing from below.
     words_per_line: 1 for word-by-word, 2-4 for multi-word subtitle style.
+    animation_speed: "fast", "normal", or "slow" — affects pop/bounce duration.
     quality_preset: "standard" or "production" for FFmpeg encoding settings.
     layout_mode: "stacked" (gameplay top, avatar bottom),
                  "camera_only" (avatar full-frame),
@@ -499,6 +603,7 @@ def render_clip(
         caption_style=caption_style,
         words_per_line=words_per_line,
         layout_mode=layout_mode,
+        animation_speed=animation_speed,
     )
 
     ass_fd, ass_path = tempfile.mkstemp(suffix=".ass")
@@ -509,6 +614,8 @@ def render_clip(
         # Escape path for FFmpeg filter (backslashes and colons on Linux are fine,
         # but spaces need escaping)
         ass_escaped = _escape_ass_path(ass_path)
+
+        logger.info(f"Starting FFmpeg render: video={video_path}, start={start}, end={end}, layout={layout_mode}")
 
         # ---- Build FFmpeg filtergraph ----
         if layout_mode == "stacked":
@@ -653,8 +760,17 @@ def render_clip(
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
+        # Log full FFmpeg output without truncation
+        logger.info(f"FFmpeg exit code: {result.returncode}")
+        if result.stdout:
+            logger.info(f"FFmpeg stdout:\n{result.stdout}")
+        if result.stderr:
+            logger.info(f"FFmpeg stderr:\n{result.stderr}")
+
         if result.returncode != 0:
             stderr = result.stderr[-3000:]
+            logger.error(f"FFmpeg failed with exit code {result.returncode}")
+            logger.error(f"FFmpeg stderr: {stderr}")
             # Provide actionable error messages for common issues
             if "No such file or directory" in stderr:
                 raise RuntimeError(
@@ -680,9 +796,19 @@ def render_clip(
                     f"Requested: {start:.1f}s to {end:.1f}s ({duration:.1f}s)\n"
                     f"FFmpeg error:\n{stderr}"
                 )
+            # Check for ASS subtitle specific errors
+            if "subtitles" in stderr.lower() or "ass" in stderr.lower():
+                raise RuntimeError(
+                    f"FFmpeg subtitle processing failed.\n"
+                    f"This may indicate an issue with the ASS subtitle file format.\n"
+                    f"Caption style: {caption_style}, Animation speed: {animation_speed}\n"
+                    f"FFmpeg error:\n{stderr}"
+                )
             raise RuntimeError(
                 f"FFmpeg rendering failed (exit {result.returncode}):\n{stderr}"
             )
+
+        logger.info(f"FFmpeg render successful: {out_path}")
 
     finally:
         if os.path.exists(ass_path):
@@ -725,6 +851,7 @@ def render_timeline(
     words_per_line: int = 1,
     quality_preset: str = "standard",
     layout_mode: str = "stacked",
+    animation_speed: str = "normal",
 ) -> str:
     """
     Render full timeline with multi-track support.
@@ -771,6 +898,7 @@ def render_timeline(
         caption_style=caption_style,
         words_per_line=words_per_line,
         layout_mode=layout_mode,
+        animation_speed=animation_speed,
     )
 
     ass_fd, ass_path = tempfile.mkstemp(suffix=".ass")

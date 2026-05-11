@@ -516,6 +516,7 @@ export async function renderClip(
     words_per_line: number
     quality_preset: string
     layout_mode: string
+    animation_speed?: 'fast' | 'normal' | 'slow'
     thumbnail_path?: string | null
   },
   onProgress: (p: number, label: string) => void,
@@ -552,6 +553,7 @@ export async function renderPreview(
     caption_style: string
     words_per_line: number
     layout_mode: string
+    animation_speed?: 'fast' | 'normal' | 'slow'
     thumbnail_path?: string | null
   },
   onProgress: (p: number, label: string) => void,

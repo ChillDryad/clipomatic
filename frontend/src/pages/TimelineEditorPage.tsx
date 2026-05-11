@@ -811,6 +811,7 @@ export function TimelineEditorPage() {
 					words_per_line: renderSettings.wordsPerLine,
 					quality_preset: renderSettings.qualityPreset,
 					layout_mode: "stacked",
+					animation_speed: renderSettings.animationSpeed,
 				},
 				(p, l) => setRenderProgress({ p, l }),
 				controller.signal,

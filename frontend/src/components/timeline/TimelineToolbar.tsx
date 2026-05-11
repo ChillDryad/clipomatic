@@ -4,7 +4,8 @@ export interface RenderSettings {
   fontSize: number
   wordsPerLine: number
   qualityPreset: 'standard' | 'production' | 'nvenc'
-  captionStyle: 'karaoke' | 'capcut'
+  captionStyle: 'karaoke' | 'capcut' | 'pop' | 'bounce'
+  animationSpeed?: 'fast' | 'normal' | 'slow'
 }
 
 interface RenderProgress {
