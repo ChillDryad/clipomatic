@@ -28,6 +28,12 @@ services:
     networks:
       - momiji-llm-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
   momiji-frontend-prod:
     build:
@@ -39,7 +45,10 @@ services:
     ports:
       - "7860:80"
     depends_on:
-      - momiji-clipper-prod
+      momiji-clipper-prod:
+        condition: service_healthy
+    networks:
+      - momiji-llm-network
     restart: unless-stopped
 
 networks:
