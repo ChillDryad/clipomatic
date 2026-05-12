@@ -150,10 +150,8 @@ export function ClipDetail({
             downloadUrl={state.downloadUrl}
             error={state.error}
             isCancelling={state.isCancelling}
-            layoutMode={state.layoutMode}
             onRender={() => onRender(clip, clipKey)}
             onCancel={() => onRenderCancel(clipKey)}
-            onLayoutChange={handleLayoutChange}
           />
         </div>
 

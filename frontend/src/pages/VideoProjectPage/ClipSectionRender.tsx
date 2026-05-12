@@ -1,6 +1,4 @@
 import { ProgressBar } from "../../components/ui/ProgressBar";
-import { ToggleGroup, ToggleGroupItem } from "../../components/ui/ToggleGroup";
-import { centeredCropBox9x16 } from "../../components/CropCanvas";
 import type { CropBox } from "../../types";
 
 interface ClipSectionRenderProps {
@@ -8,13 +6,8 @@ interface ClipSectionRenderProps {
   downloadUrl: string | null;
   error: string | null;
   isCancelling: boolean;
-  layoutMode: string;
   onRender: () => void;
   onCancel: () => void;
-  onLayoutChange: (
-    mode: string,
-    cropBoxes: { gameplay: CropBox; avatar: CropBox },
-  ) => void;
 }
 
 export function ClipSectionRender({
@@ -22,10 +15,8 @@ export function ClipSectionRender({
   downloadUrl,
   error,
   isCancelling,
-  layoutMode,
   onRender,
   onCancel,
-  onLayoutChange,
 }: ClipSectionRenderProps) {
   return (
     <div className="border border-[var(--ctp-overlay)] rounded-lg overflow-hidden">
@@ -76,31 +67,6 @@ export function ClipSectionRender({
             </p>
           </div>
         )}
-        {/* Layout mode selector */}
-        <div className="space-y-2">
-          <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">
-            Layout
-          </p>
-          <ToggleGroup
-            type="single"
-            value={layoutMode}
-            onValueChange={(mode) => {
-              if (mode === "stacked") {
-                onLayoutChange("stacked", {
-                  gameplay: { x: 0, y: 0, w: 1344, h: 1080 },
-                  avatar: { x: 1382, y: 594, w: 518, h: 464 },
-                });
-              } else {
-                const box = centeredCropBox9x16(1920, 1080);
-                onLayoutChange(mode, { gameplay: box, avatar: box });
-              }
-            }}
-          >
-            <ToggleGroupItem value="stacked" label="Stacked" />
-            <ToggleGroupItem value="camera_only" label="Camera" />
-            <ToggleGroupItem value="gameplay_only" label="Game" />
-          </ToggleGroup>
-        </div>
         <div className="flex gap-3">
           <button
             onClick={onRender}
