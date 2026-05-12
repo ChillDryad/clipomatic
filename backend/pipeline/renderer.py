@@ -349,6 +349,7 @@ def _build_ass_word_by_word(
     words_per_line: int = 1,
     layout_mode: str = "stacked",
     animation_speed: str | None = None,
+    style_preset: str | None = None,
 ) -> str:
     """
     Generate an ASS subtitle file with CapCut-style per-word karaoke.
