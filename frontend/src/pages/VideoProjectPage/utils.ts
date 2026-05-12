@@ -59,6 +59,7 @@ export const DEFAULT_RENDER_STATE = {
   qualityPreset: "standard",
   layoutMode: "stacked",
   animationSpeed: "normal" as const,
+  stylePreset: null as string | null,
 };
 
 export type RenderState = typeof DEFAULT_RENDER_STATE;

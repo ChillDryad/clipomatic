@@ -517,6 +517,7 @@ export async function renderClip(
     quality_preset: string
     layout_mode: string
     animation_speed?: 'fast' | 'normal' | 'slow'
+    style_preset?: string | null
     thumbnail_path?: string | null
   },
   onProgress: (p: number, label: string) => void,

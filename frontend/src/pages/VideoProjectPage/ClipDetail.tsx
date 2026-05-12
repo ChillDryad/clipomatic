@@ -177,6 +177,7 @@ export function ClipDetail({
             captionStyle={state.captionStyle}
             animationSpeed={state.animationSpeed || 'normal'}
             qualityPreset={state.qualityPreset}
+            stylePreset={state.stylePreset || null}
             nvencAvailable={nvencAvailable}
             onUpdate={handleStyleUpdate}
           />

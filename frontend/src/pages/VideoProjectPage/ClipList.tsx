@@ -323,6 +323,7 @@ export function ClipList({
 					quality_preset: state.qualityPreset,
 					layout_mode: state.layoutMode,
 					animation_speed: state.animationSpeed,
+					style_preset: state.stylePreset,
 				},
 				(value, label) =>
 					updateRenderState(clipKey, {

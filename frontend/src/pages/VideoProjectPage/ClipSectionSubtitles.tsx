@@ -16,6 +16,7 @@ interface ClipSectionSubtitlesProps {
   captionStyle: string;
   animationSpeed: 'fast' | 'normal' | 'slow';
   qualityPreset: string;
+  stylePreset?: string | null;
   nvencAvailable: boolean;
   onUpdate: (patch: Record<string, unknown>) => void;
 }
@@ -35,6 +36,7 @@ export function ClipSectionSubtitles({
   captionStyle,
   animationSpeed,
   qualityPreset,
+  stylePreset,
   nvencAvailable,
   onUpdate,
 }: ClipSectionSubtitlesProps) {
@@ -171,6 +173,8 @@ export function ClipSectionSubtitles({
               { value: "capcut", label: "CapCut", desc: "Solid highlight" },
               { value: "pop", label: "Pop", desc: "Word bounce in" },
               { value: "bounce", label: "Bounce", desc: "From below" },
+              { value: "typewriter", label: "Typewriter", desc: "Char reveal" },
+              { value: "scale_pulse", label: "Pulse", desc: "Scale emphasis" },
             ].map((style) => (
               <button
                 key={style.value}
@@ -190,8 +194,8 @@ export function ClipSectionSubtitles({
           </div>
         </div>
 
-        {/* Animation Speed — only show for pop/bounce styles */}
-        {(captionStyle === "pop" || captionStyle === "bounce") && (
+        {/* Animation Speed — show for pop/bounce/typewriter/pulse styles */}
+        {(captionStyle === "pop" || captionStyle === "bounce" || captionStyle === "typewriter" || captionStyle === "scale_pulse") && (
           <div className="space-y-2 mt-3">
             <label className="text-xs font-medium text-[var(--ctp-text)]">
               Animation Speed
@@ -213,6 +217,36 @@ export function ClipSectionSubtitles({
             </div>
           </div>
         )}
+
+        {/* Style Preset */}
+        <div className="space-y-2 mt-3">
+          <label className="text-xs font-medium text-[var(--ctp-text)]">
+            Style Preset
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { value: "tiktok_viral", label: "TikTok", desc: "84px, Arial Black" },
+              { value: "youtube_pro", label: "YouTube", desc: "72px, Arial" },
+              { value: "instagram_reels", label: "Instagram", desc: "80px, Impact" },
+            ].map((preset) => (
+              <button
+                key={preset.value}
+                onClick={() => update({ stylePreset: preset.value })}
+                className={`p-2 rounded border text-left ${
+                  stylePreset === preset.value
+                    ? "border-[var(--ctp-mauve)] bg-[var(--ctp-surface-2)]"
+                    : "border-[var(--ctp-overlay)] hover:border-[var(--ctp-subtext)]"
+                }`}
+              >
+                <div className="text-xs font-medium">{preset.label}</div>
+                <div className="text-[10px] text-[var(--ctp-subtext)]">
+                  {preset.desc}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="flex gap-4 mt-3">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
