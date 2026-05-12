@@ -1,4 +1,5 @@
 import { ProgressBar } from "../../components/ui/ProgressBar";
+import { ToggleGroup, ToggleGroupItem } from "../../components/ui/ToggleGroup";
 import { centeredCropBox9x16 } from "../../components/CropCanvas";
 import type { CropBox } from "../../types";
 
@@ -80,62 +81,25 @@ export function ClipSectionRender({
           <p className="text-xs font-semibold text-[var(--ctp-subtext)] uppercase tracking-widest">
             Layout
           </p>
-          <div className="flex gap-3">
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="layout"
-                value="stacked"
-                checked={layoutMode === "stacked"}
-                onChange={() =>
-                  onLayoutChange("stacked", {
-                    gameplay: { x: 0, y: 0, w: 1344, h: 1080 },
-                    avatar: { x: 1382, y: 594, w: 518, h: 464 },
-                  })
-                }
-                className="accent-[var(--ctp-mauve)]"
-              />
-              <span className="text-xs text-[var(--ctp-text)]">Stacked</span>
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="layout"
-                value="camera_only"
-                checked={layoutMode === "camera_only"}
-                onChange={() => {
-                  const box = centeredCropBox9x16(1920, 1080);
-                  onLayoutChange("camera_only", {
-                    gameplay: box,
-                    avatar: box,
-                  });
-                }}
-                className="accent-[var(--ctp-mauve)]"
-              />
-              <span className="text-xs text-[var(--ctp-text)]">
-                Camera Only
-              </span>
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="layout"
-                value="gameplay_only"
-                checked={layoutMode === "gameplay_only"}
-                onChange={() => {
-                  const box = centeredCropBox9x16(1920, 1080);
-                  onLayoutChange("gameplay_only", {
-                    gameplay: box,
-                    avatar: box,
-                  });
-                }}
-                className="accent-[var(--ctp-mauve)]"
-              />
-              <span className="text-xs text-[var(--ctp-text)]">
-                Game Only
-              </span>
-            </label>
-          </div>
+          <ToggleGroup
+            type="single"
+            value={layoutMode}
+            onValueChange={(mode) => {
+              if (mode === "stacked") {
+                onLayoutChange("stacked", {
+                  gameplay: { x: 0, y: 0, w: 1344, h: 1080 },
+                  avatar: { x: 1382, y: 594, w: 518, h: 464 },
+                });
+              } else {
+                const box = centeredCropBox9x16(1920, 1080);
+                onLayoutChange(mode, { gameplay: box, avatar: box });
+              }
+            }}
+          >
+            <ToggleGroupItem value="stacked" label="Stacked" />
+            <ToggleGroupItem value="camera_only" label="Camera" />
+            <ToggleGroupItem value="gameplay_only" label="Game" />
+          </ToggleGroup>
         </div>
         <div className="flex gap-3">
           <button

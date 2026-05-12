@@ -4,7 +4,6 @@ import { BloomIndicator } from "../../components/ui/BloomIndicator";
 import { formatTime } from "../../utils/format";
 import type { Clip, CropBox } from "../../types";
 import type { RenderState } from "./utils";
-import { CollapsibleSection } from "./CollapsibleSection";
 import { ClipSectionInfo } from "./ClipSectionInfo";
 import { ClipSectionPreviewCrop } from "./ClipSectionPreviewCrop";
 import { ClipSectionSubtitles } from "./ClipSectionSubtitles";
@@ -16,18 +15,6 @@ interface ClipDetailProps {
   clipIndex: number;
   renderState: RenderState;
   updateRenderState: (clipKey: string, patch: Partial<RenderState>) => void;
-  expandedSections: Record<
-    string,
-    {
-      info?: boolean;
-      "preview-crop"?: boolean;
-      subtitles?: boolean;
-    }
-  >;
-  toggleSection: (
-    clipKey: string,
-    section: "info" | "preview-crop" | "subtitles",
-  ) => void;
   onCollapse: () => void;
   onSchedule: (clipKey: string) => void;
   onRender: (clip: Clip, clipKey: string) => Promise<void>;
@@ -57,8 +44,6 @@ export function ClipDetail({
   clipIndex,
   renderState: state,
   updateRenderState,
-  expandedSections,
-  toggleSection,
   onCollapse,
   onSchedule,
   onRender,
@@ -81,10 +66,6 @@ export function ClipDetail({
   onClipUpdate,
   onSaveTiming,
 }: ClipDetailProps) {
-  const toggle = (section: "info" | "preview-crop" | "subtitles") =>
-    toggleSection(clipKey, section);
-  const expanded = (section: string) => !!expandedSections[clipKey]?.[section as keyof (typeof expandedSections)[string]];
-
   const handleLayoutChange = (
     mode: string,
     cropBoxes: { gameplay: CropBox; avatar: CropBox },
@@ -117,12 +98,8 @@ export function ClipDetail({
           <BloomIndicator score={clip.virality_score || 0} size="md" />
         </div>
 
-        {/* Clip Info — Timing + Why merged */}
-        <CollapsibleSection
-          title="Clip Info"
-          expanded={expanded("info")}
-          onToggle={() => toggle("info")}
-        >
+        {/* Unified content: Clip Info + Preview/Crop + Subtitles + Render */}
+        <div className="space-y-4">
           <ClipSectionInfo
             clip={clip}
             clipKey={clipKey}
@@ -131,14 +108,7 @@ export function ClipDetail({
             onClipUpdate={onClipUpdate}
             onSaveTiming={onSaveTiming}
           />
-        </CollapsibleSection>
 
-        {/* Preview & Crop — merged */}
-        <CollapsibleSection
-          title="Preview & Crop"
-          expanded={expanded("preview-crop")}
-          onToggle={() => toggle("preview-crop")}
-        >
           <ClipSectionPreviewCrop
             layoutMode={state.layoutMode}
             cropBoxes={state.cropBoxes}
@@ -154,14 +124,7 @@ export function ClipDetail({
             onRefresh={() => onRefreshCrop(clip, clipKey)}
             onLayoutChange={handleLayoutChange}
           />
-        </CollapsibleSection>
 
-        {/* Subtitles — Improve + Style merged */}
-        <CollapsibleSection
-          title="Subtitles"
-          expanded={expanded("subtitles")}
-          onToggle={() => toggle("subtitles")}
-        >
           <ClipSectionSubtitles
             hasImprovedTranscript={hasImprovedTranscript}
             progress={improveProgress}
@@ -181,19 +144,18 @@ export function ClipDetail({
             nvencAvailable={nvencAvailable}
             onUpdate={handleStyleUpdate}
           />
-        </CollapsibleSection>
 
-        {/* Render */}
-        <ClipSectionRender
-          progress={state.progress}
-          downloadUrl={state.downloadUrl}
-          error={state.error}
-          isCancelling={state.isCancelling}
-          layoutMode={state.layoutMode}
-          onRender={() => onRender(clip, clipKey)}
-          onCancel={() => onRenderCancel(clipKey)}
-          onLayoutChange={handleLayoutChange}
-        />
+          <ClipSectionRender
+            progress={state.progress}
+            downloadUrl={state.downloadUrl}
+            error={state.error}
+            isCancelling={state.isCancelling}
+            layoutMode={state.layoutMode}
+            onRender={() => onRender(clip, clipKey)}
+            onCancel={() => onRenderCancel(clipKey)}
+            onLayoutChange={handleLayoutChange}
+          />
+        </div>
 
         {/* Actions */}
         <div className="flex gap-2 pt-2 border-t border-[var(--ctp-overlay)]">

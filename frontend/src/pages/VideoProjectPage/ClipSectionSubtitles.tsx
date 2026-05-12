@@ -1,4 +1,5 @@
 import { ProgressBar } from "../../components/ui/ProgressBar";
+import { ToggleGroup, ToggleGroupItem } from "../../components/ui/ToggleGroup";
 import { FONT_OPTIONS } from "./utils";
 
 interface ClipSectionSubtitlesProps {
@@ -21,6 +22,49 @@ interface ClipSectionSubtitlesProps {
   onUpdate: (patch: Record<string, unknown>) => void;
 }
 
+// Preset configurations that auto-update form params
+const STYLE_PRESETS: Record<string, {
+  font: string;
+  size: number;
+  fontColor: string;
+  highlightColor: string;
+  outlineColor: string;
+  outlineWidth: number;
+  captionStyle: string;
+  animationSpeed: 'fast' | 'normal' | 'slow';
+}> = {
+  tiktok_viral: {
+    font: "Arial Black",
+    size: 84,
+    fontColor: "#FFFFFF",
+    highlightColor: "#FFFF00",
+    outlineColor: "#000000",
+    outlineWidth: 6.0,
+    captionStyle: "pop",
+    animationSpeed: "fast",
+  },
+  youtube_pro: {
+    font: "Arial",
+    size: 72,
+    fontColor: "#FFFFFF",
+    highlightColor: "#FFD700",
+    outlineColor: "#333333",
+    outlineWidth: 4.0,
+    captionStyle: "karaoke",
+    animationSpeed: "normal",
+  },
+  instagram_reels: {
+    font: "Impact",
+    size: 80,
+    fontColor: "#FFFFFF",
+    highlightColor: "#FF00FF",
+    outlineColor: "#000000",
+    outlineWidth: 5.0,
+    captionStyle: "bounce",
+    animationSpeed: "normal",
+  },
+};
+
 export function ClipSectionSubtitles({
   hasImprovedTranscript,
   progress,
@@ -41,6 +85,23 @@ export function ClipSectionSubtitles({
   onUpdate,
 }: ClipSectionSubtitlesProps) {
   const update = (p: Record<string, unknown>) => onUpdate(p);
+
+  const handlePresetChange = (presetName: string) => {
+    const preset = STYLE_PRESETS[presetName];
+    if (preset) {
+      update({
+        stylePreset: presetName,
+        fontName: preset.font,
+        fontSize: preset.size,
+        fontColor: preset.fontColor,
+        highlightColor: preset.highlightColor,
+        outlineColor: preset.outlineColor,
+        outlineWidth: preset.outlineWidth,
+        captionStyle: preset.captionStyle,
+        animationSpeed: preset.animationSpeed,
+      });
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -163,33 +224,22 @@ export function ClipSectionSubtitles({
             />
           </label>
         </div>
+
+        {/* Caption Style - ToggleGroup */}
         <div className="space-y-2 mt-3">
           <label className="text-xs font-medium text-[var(--ctp-text)]">
             Caption Style
           </label>
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { value: "karaoke", label: "Karaoke", desc: "Color sweep" },
-              { value: "capcut", label: "CapCut", desc: "Solid highlight" },
-              { value: "pop", label: "Pop", desc: "Word bounce in" },
-              { value: "bounce", label: "Bounce", desc: "From below" },
-            ].map((style) => (
-              <button
-                key={style.value}
-                onClick={() => update({ captionStyle: style.value })}
-                className={`p-2 rounded border text-left ${
-                  captionStyle === style.value
-                    ? "border-[var(--ctp-mauve)] bg-[var(--ctp-surface-2)]"
-                    : "border-[var(--ctp-overlay)] hover:border-[var(--ctp-subtext)]"
-                }`}
-              >
-                <div className="text-xs font-medium">{style.label}</div>
-                <div className="text-[10px] text-[var(--ctp-subtext)]">
-                  {style.desc}
-                </div>
-              </button>
-            ))}
-          </div>
+          <ToggleGroup
+            type="single"
+            value={captionStyle}
+            onValueChange={(val) => update({ captionStyle: val })}
+          >
+            <ToggleGroupItem value="karaoke" label="Karaoke" description="Color sweep" />
+            <ToggleGroupItem value="capcut" label="CapCut" description="Solid highlight" />
+            <ToggleGroupItem value="pop" label="Pop" description="Word bounce" />
+            <ToggleGroupItem value="bounce" label="Bounce" description="From below" />
+          </ToggleGroup>
         </div>
 
         {/* Animation Speed — show for pop/bounce styles */}
@@ -198,51 +248,32 @@ export function ClipSectionSubtitles({
             <label className="text-xs font-medium text-[var(--ctp-text)]">
               Animation Speed
             </label>
-            <div className="flex gap-2">
-              {(["fast", "normal", "slow"] as const).map((speed) => (
-                <button
-                  key={speed}
-                  onClick={() => update({ animationSpeed: speed })}
-                  className={`flex-1 py-1.5 rounded text-xs capitalize ${
-                    animationSpeed === speed
-                      ? "bg-[var(--ctp-mauve)] text-[var(--ctp-base)]"
-                      : "bg-[var(--ctp-surface-1)] text-[var(--ctp-subtext)]"
-                  }`}
-                >
-                  {speed}
-                </button>
-              ))}
-            </div>
+            <ToggleGroup
+              type="single"
+              value={animationSpeed}
+              onValueChange={(val) => update({ animationSpeed: val })}
+            >
+              <ToggleGroupItem value="fast" label="Fast" />
+              <ToggleGroupItem value="normal" label="Normal" />
+              <ToggleGroupItem value="slow" label="Slow" />
+            </ToggleGroup>
           </div>
         )}
 
-        {/* Style Preset */}
+        {/* Style Preset - ToggleGroup */}
         <div className="space-y-2 mt-3">
           <label className="text-xs font-medium text-[var(--ctp-text)]">
             Style Preset
           </label>
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { value: "tiktok_viral", label: "TikTok", desc: "84px, Arial Black" },
-              { value: "youtube_pro", label: "YouTube", desc: "72px, Arial" },
-              { value: "instagram_reels", label: "Instagram", desc: "80px, Impact" },
-            ].map((preset) => (
-              <button
-                key={preset.value}
-                onClick={() => update({ stylePreset: preset.value })}
-                className={`p-2 rounded border text-left ${
-                  stylePreset === preset.value
-                    ? "border-[var(--ctp-mauve)] bg-[var(--ctp-surface-2)]"
-                    : "border-[var(--ctp-overlay)] hover:border-[var(--ctp-subtext)]"
-                }`}
-              >
-                <div className="text-xs font-medium">{preset.label}</div>
-                <div className="text-[10px] text-[var(--ctp-subtext)]">
-                  {preset.desc}
-                </div>
-              </button>
-            ))}
-          </div>
+          <ToggleGroup
+            type="single"
+            value={stylePreset || ""}
+            onValueChange={handlePresetChange}
+          >
+            <ToggleGroupItem value="tiktok_viral" label="TikTok" description="84px, Arial Black" />
+            <ToggleGroupItem value="youtube_pro" label="YouTube" description="72px, Arial" />
+            <ToggleGroupItem value="instagram_reels" label="Instagram" description="80px, Impact" />
+          </ToggleGroup>
         </div>
 
         <div className="flex gap-4 mt-3">

@@ -56,13 +56,6 @@ export function ClipList({
 	const [saving, setSaving] = useState(false);
 	const [showSchedule, setShowSchedule] = useState<string | null>(null);
 
-	const [expandedSections, setExpandedSections] = useState<
-		Record<
-			string,
-			{ info?: boolean; "preview-crop"?: boolean; subtitles?: boolean }
-		>
-	>({});
-
 	const [improvedSegments, setImprovedSegments] = useState<
 		Map<string, Transcript>
 	>(new Map());
@@ -92,16 +85,6 @@ export function ClipList({
 		setRenderState((prev) => ({
 			...prev,
 			[clipId]: { ...(prev[clipId] || DEFAULT_RENDER_STATE), ...patch },
-		}));
-	};
-
-	const toggleSection = (
-		clipKey: string,
-		section: "info" | "preview-crop" | "subtitles",
-	) => {
-		setExpandedSections((prev) => ({
-			...prev,
-			[clipKey]: { ...prev[clipKey], [section]: !prev[clipKey]?.[section] },
 		}));
 	};
 
@@ -561,8 +544,6 @@ export function ClipList({
 								clipIndex={clips.findIndex((c) => getClipKey(c) === clipKey)}
 								renderState={state}
 								updateRenderState={updateRenderState}
-								expandedSections={expandedSections}
-								toggleSection={toggleSection}
 								onCollapse={() => setExpandedClipId(null)}
 								onSchedule={setShowSchedule}
 								onRender={handleRender}
