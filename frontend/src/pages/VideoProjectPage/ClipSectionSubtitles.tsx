@@ -173,8 +173,6 @@ export function ClipSectionSubtitles({
               { value: "capcut", label: "CapCut", desc: "Solid highlight" },
               { value: "pop", label: "Pop", desc: "Word bounce in" },
               { value: "bounce", label: "Bounce", desc: "From below" },
-              { value: "typewriter", label: "Typewriter", desc: "Char reveal" },
-              { value: "scale_pulse", label: "Pulse", desc: "Scale emphasis" },
             ].map((style) => (
               <button
                 key={style.value}
@@ -194,8 +192,8 @@ export function ClipSectionSubtitles({
           </div>
         </div>
 
-        {/* Animation Speed — show for pop/bounce/typewriter/pulse styles */}
-        {(captionStyle === "pop" || captionStyle === "bounce" || captionStyle === "typewriter" || captionStyle === "scale_pulse") && (
+        {/* Animation Speed — show for pop/bounce styles */}
+        {(captionStyle === "pop" || captionStyle === "bounce") && (
           <div className="space-y-2 mt-3">
             <label className="text-xs font-medium text-[var(--ctp-text)]">
               Animation Speed

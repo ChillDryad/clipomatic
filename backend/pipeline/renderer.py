@@ -257,45 +257,10 @@ def _generate_bounce_animation(word: str, duration_ms: int = 280) -> str:
     )
 
 
-def _generate_typewriter_animation(text: str, char_duration_ms: int = 100) -> list[tuple[float, float, str]]:
-    """
-    Typewriter effect: characters appear one at a time.
-
-    Returns list of (start_sec, end_sec, text) tuples for Dialogue lines.
-    Each character gets its own line with incremental reveal.
-    """
-    lines = []
-    for i in range(1, len(text) + 1):
-        start_ms = (i - 1) * char_duration_ms
-        end_ms = start_ms + char_duration_ms
-        lines.append((start_ms / 1000.0, end_ms / 1000.0, text[:i]))
-    return lines
-
-
-def _generate_scale_pulse_animation(word: str, duration_ms: int = 200, emphasis: bool = False) -> str:
-    """
-    Scale pulse animation: 100% → scale → 100%
-
-    ASS tags:
-    - \\fscx/\\fscy: Font scale X/Y
-    - \\t(start,end,transform): Animate over milliseconds
-
-    Emphasis words pulse to 125%, normal words to 110%.
-    Example: {\\fscx100\\fscy100\\t(0,100,\\fscx110\\fscy110)\\t(100,200,\\fscx100\\fscy100)}Word
-    """
-    scale = 125 if emphasis else 110
-    half = duration_ms // 2
-    return (
-        f"{{\\fscx100\\fscy100"
-        f"\\t(0,{half},\\fscx{scale}\\fscy{scale})"
-        f"\\t({half},{duration_ms},\\fscx100\\fscy100)}}{word}"
-    )
-
-
 _SPEED_MAP = {
-    "fast": {"pop_duration": 120, "bounce_duration": 200, "typewriter_ms": 60, "pulse_duration": 150},
-    "normal": {"pop_duration": 180, "bounce_duration": 280, "typewriter_ms": 100, "pulse_duration": 200},
-    "slow": {"pop_duration": 250, "bounce_duration": 400, "typewriter_ms": 150, "pulse_duration": 300},
+    "fast": {"pop_duration": 120, "bounce_duration": 200},
+    "normal": {"pop_duration": 180, "bounce_duration": 280},
+    "slow": {"pop_duration": 250, "bounce_duration": 400},
 }
 
 
@@ -364,10 +329,8 @@ def _build_ass_word_by_word(
       with no sweep animation, using \\c to switch to highlight color
     - "pop": words bounce in with scale animation (50% → 115% → 100%)
     - "bounce": words bounce up from below frame with overshoot
-    - "typewriter": characters appear one at a time
-    - "scale_pulse": words pulse larger on appear (110% or 125% for emphasis)
 
-    animation_speed: "fast", "normal", or "slow" — affects pop/bounce/typewriter/pulse duration
+    animation_speed: "fast", "normal", or "slow" — affects pop/bounce duration
 
     A short fade-in softens word entrance. No fade-out within the word's window —
     the next word's line simply replaces it cleanly.
@@ -449,22 +412,6 @@ def _build_ass_word_by_word(
             elif caption_style == "bounce":
                 bounce_dur = speed_config["bounce_duration"]
                 dialogue_text = _generate_bounce_animation(text, bounce_dur)
-            elif caption_style == "typewriter":
-                # Typewriter creates multiple Dialogue lines per word
-                typewriter_ms = speed_config["typewriter_ms"]
-                char_lines = _generate_typewriter_animation(text, typewriter_ms)
-                for char_start, char_end, char_text in char_lines:
-                    adjusted_start = t0 + char_start
-                    adjusted_end = t0 + char_end
-                    lines.append(
-                        f"Dialogue: 0,{_seconds_to_ass_time(adjusted_start)},"
-                        f"{_seconds_to_ass_time(adjusted_end)},Default,,0,0,0,,"
-                        f"{fade_tag}{char_text}\n"
-                    )
-                continue  # Skip the standard line append below
-            elif caption_style == "scale_pulse":
-                pulse_dur = speed_config["pulse_duration"]
-                dialogue_text = _generate_scale_pulse_animation(text, pulse_dur, emphasis=False)
             else:
                 # Default karaoke style
                 kf_dur = max(1, round((t1 - t0) * 100))
@@ -552,45 +499,6 @@ def _build_ass_word_by_word(
                         f"{fade_tag}{{\\pos({pos_x},{pos_y})}}{word_tag}\n"
                     )
 
-            elif caption_style == "typewriter":
-                # Typewriter in multi-word mode: each word gets character-by-character reveal
-                typewriter_ms = speed_config["typewriter_ms"]
-                for wi, (w_t0, w_t1, w_text) in enumerate(group):
-                    if w_t1 <= w_t0:
-                        continue
-                    pos_x = base_x + start_offset + wi * word_spacing
-                    # Generate char-by-char lines for this word
-                    char_lines = _generate_typewriter_animation(w_text, typewriter_ms)
-                    for char_start, char_end, char_text in char_lines:
-                        adjusted_start = w_t0 + char_start
-                        adjusted_end = w_t0 + char_end
-                        lines.append(
-                            f"Dialogue: 0,{_seconds_to_ass_time(adjusted_start)},"
-                            f"{_seconds_to_ass_time(adjusted_end)},Default,,0,0,0,,"
-                            f"{fade_tag}{{\\pos({pos_x},{pos_y})}}{char_text}\n"
-                        )
-
-            elif caption_style == "scale_pulse":
-                # Scale pulse for multi-word: each word pulses independently
-                pulse_dur = speed_config["pulse_duration"]
-                for wi, (w_t0, w_t1, w_text) in enumerate(group):
-                    if w_t1 <= w_t0:
-                        continue
-                    word_duration = w_t1 - w_t0
-                    if wi + 1 < len(group):
-                        w_end = max(group[wi + 1][0], w_t0 + max(word_duration, 0.2))
-                    else:
-                        w_end = w_t1 + 0.3
-
-                    pos_x = base_x + start_offset + wi * word_spacing
-                    word_tag = _generate_scale_pulse_animation(w_text, pulse_dur, emphasis=False)
-
-                    lines.append(
-                        f"Dialogue: 0,{_seconds_to_ass_time(w_t0)},"
-                        f"{_seconds_to_ass_time(w_end)},Default,,0,0,0,,"
-                        f"{fade_tag}{{\\pos({pos_x},{pos_y})}}{word_tag}\n"
-                    )
-
             else:
                 # Karaoke style - grouped approach (single Dialogue line per word group)
                 text_parts = []
@@ -649,10 +557,9 @@ def render_clip(
     Render a single clip to a 9:16 vertical MP4 with per-word karaoke subtitles.
 
     caption_style: "karaoke" for sweep highlight, "capcut" for solid highlight,
-                   "pop" for word bounce in, "bounce" for words bouncing from below,
-                   "typewriter" for character reveal, "scale_pulse" for emphasis pulse.
+                   "pop" for word bounce in, "bounce" for words bouncing from below.
     words_per_line: 1 for word-by-word, 2-4 for multi-word subtitle style.
-    animation_speed: "fast", "normal", or "slow" — affects pop/bounce/pulse/typewriter duration.
+    animation_speed: "fast", "normal", or "slow" — affects pop/bounce duration.
     style_preset: Optional preset (tiktok_viral, youtube_pro, instagram_reels) for font/size/colors.
     quality_preset: "standard" or "production" for FFmpeg encoding settings.
     layout_mode: "stacked" (gameplay top, avatar bottom),

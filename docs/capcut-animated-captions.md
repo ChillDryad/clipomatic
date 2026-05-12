@@ -27,7 +27,7 @@ This document outlines a comprehensive plan to enhance the clipomatic subtitle s
 
 **Limitations:**
 
-- ❌ No advanced animations (pop, bounce, typewriter, scale pulse)
+- ❌ No advanced animations (pop, bounce)
 - ❌ No emoji support
 - ❌ No color scheme presets
 - ❌ No platform-specific configurations
@@ -63,7 +63,7 @@ Expand `caption_style` parameter in `_build_ass_word_by_word()`:
 
 ```python
 caption_style: str = "karaoke"  # Existing
-# Add: "pop", "bounce", "typewriter", "scale_pulse"
+# Add: "pop", "bounce"
 ```
 
 **New Animation Generator Functions:**
@@ -97,36 +97,6 @@ def _generate_bounce_animation(word: str, start_y: int = 1100, end_y: int = 960)
         f"\\t(0,120,\\fscx115\\fscy115)"
         f"\\t(120,200,\\fscx95\\fscy95)"
         f"\\t(200,280,\\fscx100\\fscy100)}}{word}"
-    )
-
-
-def _generate_typewriter_animation(text: str, char_duration_ms: int = 100) -> str:
-    """
-    Typewriter effect: characters appear one at a time
-
-    Each character gets its own Dialogue line with incremental reveal.
-    Returns list of Dialogue lines.
-    """
-    lines = []
-    for i in range(1, len(text) + 1):
-        revealed = text[:i]
-        start_ms = (i - 1) * char_duration_ms
-        end_ms = start_ms + 100  # Hold for 100ms
-        lines.append((start_ms / 1000, end_ms / 1000, revealed))
-    return lines
-
-
-def _generate_scale_pulse_animation(word: str, emphasis: bool = False) -> str:
-    """
-    Scale pulse with optional emphasis
-
-    Emphasis words pulse to 125%, normal words to 110%
-    """
-    scale = 125 if emphasis else 110
-    return (
-        f"{{\\fscx100\\fscy100"
-        f"\\t(0,100,\\fscx{scale}\\fscy{scale})"
-        f"\\t(100,200,\\fscx100\\fscy100)}}{word}"
     )
 ```
 
@@ -178,19 +148,6 @@ if caption_style == "pop":
 
 elif caption_style == "bounce":
     effect = _generate_bounce_animation(text)
-    lines.append(f"Dialogue: 0,{_seconds_to_ass_time(t0)},{_seconds_to_ass_time(t_end)},Default,,0,0,0,,{fade_tag}{effect}")
-
-elif caption_style == "typewriter":
-    # Generate per-character lines
-    char_lines = _generate_typewriter_animation(text, speed_config["typewriter_ms"])
-    for char_start, char_end, char_text in char_lines:
-        adjusted_start = t0 + char_start
-        adjusted_end = t0 + char_end
-        lines.append(f"Dialogue: 0,{_seconds_to_ass_time(adjusted_start)},{_seconds_to_ass_time(adjusted_end)},Typewriter,,0,0,0,,{char_text}")
-
-elif caption_style == "scale_pulse":
-    is_emphasis = emphasis_words and any(e.lower() in text.lower() for e in emphasis_words)
-    effect = _generate_scale_pulse_animation(text, emphasis=is_emphasis)
     lines.append(f"Dialogue: 0,{_seconds_to_ass_time(t0)},{_seconds_to_ass_time(t_end)},Default,,0,0,0,,{fade_tag}{effect}")
 ```
 
@@ -372,7 +329,7 @@ def _apply_color_scheme(
 
 ```typescript
 const [animationStyle, setAnimationStyle] = useState<
-  "karaoke" | "capcut" | "pop" | "bounce" | "typewriter" | "scale_pulse"
+  "karaoke" | "capcut" | "pop" | "bounce"
 >("karaoke");
 const [animationSpeed, setAnimationSpeed] = useState<
   "fast" | "normal" | "slow"
@@ -399,8 +356,6 @@ const [platformPreset, setPlatformPreset] = useState<
       { value: "capcut", label: "CapCut", desc: "Solid highlight" },
       { value: "pop", label: "Pop", desc: "Word bounce" },
       { value: "bounce", label: "Bounce", desc: "From below" },
-      { value: "typewriter", label: "Typewriter", desc: "Char reveal" },
-      { value: "scale_pulse", label: "Pulse", desc: "Scale emphasis" },
     ].map((style) => (
       <button
         key={style.value}
@@ -595,9 +550,7 @@ export async function renderClip(
       | "karaoke"
       | "capcut"
       | "pop"
-      | "bounce"
-      | "typewriter"
-      | "scale_pulse";
+      | "bounce";
     animation_speed?: "fast" | "normal" | "slow";
     color_scheme?: "gaming" | "professional" | "lifestyle" | "comedy";
     enable_emoji?: boolean;
@@ -623,7 +576,7 @@ export interface RenderSettings {
   qualityPreset: "standard" | "production" | "nvenc";
   captionStyle: "karaoke" | "capcut";
   // NEW
-  animationStyle?: "pop" | "bounce" | "typewriter" | "scale_pulse";
+  animationStyle?: "pop" | "bounce";
   animationSpeed?: "fast" | "normal" | "slow";
   colorScheme?: "gaming" | "professional" | "lifestyle" | "comedy";
 }
@@ -653,8 +606,6 @@ export interface RenderSettings {
     <option value="capcut">CapCut</option>
     <option value="pop">Pop</option>
     <option value="bounce">Bounce</option>
-    <option value="typewriter">Typewriter</option>
-    <option value="scale_pulse">Pulse</option>
   </select>
 </div>
 ```
@@ -700,22 +651,6 @@ def test_bounce_animation_uses_move_tag():
     )
 
     assert "\\move(540,1100,540,960)" in ass_content
-
-
-def test_typewriter_generates_per_character_lines():
-    """Verify typewriter creates multiple Dialogue lines"""
-    ass_content = _build_ass_word_by_word(
-        segments=[{
-            "start": 0.0,
-            "end": 1.0,
-            "words": [{"word": "Hi", "start": 0.0, "end": 1.0}]
-        }],
-        caption_style="typewriter",
-    )
-
-    # Should have 2 Dialogue lines for 2 characters
-    dialogue_count = ass_content.count("Dialogue: 0,")
-    assert dialogue_count == 2
 
 
 def test_emoji_font_switching():
@@ -864,17 +799,6 @@ describe('ClipSectionSubtitles', () => {
 - **Best For:** Emphasis, key moments
 - **Duration:** 280ms with overshoot
 
-### Typewriter
-
-- **Effect:** Characters appear one at a time
-- **Best For:** Storytelling, dramatic reveals
-- **Speed:** 100ms per character (normal)
-
-### Scale Pulse
-
-- **Effect:** Words pulse larger on appear
-- **Best For:** Emphasis on key words
-- **Emphasis:** 125% scale vs 110% normal
 
 ## Color Schemes
 
@@ -973,9 +897,7 @@ describe('ClipSectionSubtitles', () => {
 
 ### Week 2: Advanced Animations & Presets
 
-- [ ] 1.4: Implement typewriter animation
-- [ ] 1.5: Implement scale pulse animation
-- [ ] 1.6: Add style presets (TikTok, YouTube, etc.)
+- [ ] 1.4: Add style presets (TikTok, YouTube, etc.)
 - [ ] Test: All 6 animation styles render correctly
 
 ### Week 3: Emoji & Color Schemes
@@ -1010,7 +932,7 @@ describe('ClipSectionSubtitles', () => {
 
 ## Success Metrics
 
-- [ ] ✅ All 6 animation styles render correctly in FFmpeg
+- [ ] ✅ All 4 animation styles render correctly in FFmpeg
 - [ ] ✅ Emoji support works across Windows/macOS/Linux
 - [ ] ✅ Color schemes apply correct ASS color codes
 - [ ] ✅ Platform presets configure all settings appropriately
@@ -1032,8 +954,6 @@ describe('ClipSectionSubtitles', () => {
 2. **Emoji Platform Variance:** Different emoji sets per OS
    - **Solution:** Bundle emoji font or use image overlays
 
-3. **Typewriter Performance:** Slow for long clips
-   - **Solution:** Auto-disable for clips >10s or add warning
 
 ### Future Enhancements
 
@@ -1072,14 +992,6 @@ Dialogue: 0,0:00:00.50,0:00:01.20,Default,,0,0,0,,{\fad(200,0)\c&H00FFFF&\fscx50
 Dialogue: 0,0:00:00.00,0:00:00.80,Default,,0,0,0,,{\fad(200,0)\move(540,1100,540,960)\t(0,120,\fscx115\fscy115)\t(120,200,\fscx95\fscy95)\t(200,280,\fscx100\fscy100)}Word
 ```
 
-### Typewriter Style Example
-
-```ass
-Dialogue: 0,0:00:00.00,0:00:00.10,Typewriter,,0,0,0,,T
-Dialogue: 0,0:00:00.10,0:00:00.20,Typewriter,,0,0,0,,Th
-Dialogue: 0,0:00:00.20,0:00:00.30,Typewriter,,0,0,0,,Thi
-Dialogue: 0,0:00:00.30,0:00:00.40,Typewriter,,0,0,0,,This
-```
 
 ---
 
