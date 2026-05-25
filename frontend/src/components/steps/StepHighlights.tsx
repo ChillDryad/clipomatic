@@ -16,7 +16,7 @@ export function StepHighlights() {
   const sourcePath = source?.audioPath ?? source?.videoPath ?? null
 
   const durationHours = (transcript?.duration ?? 0) / 3600
-  const targetCount = Math.max(4, Math.round(durationHours * 3))
+  const targetCount = Math.max(8, Math.round(durationHours * 9))
 
   // Check for cached clips on mount
   useEffect(() => {

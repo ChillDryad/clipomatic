@@ -78,17 +78,18 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
   // Default crop boxes (source coordinates scaled to canvas)
   // Stacked: Gameplay left 70%, Avatar right 27% — these NEVER change
   // Single mode: 9:16 crop centered in the frame
+  // Note: Image is drawn at CANVAS_PADDING offset, so crop boxes must account for this
   const stackedGameplay: RectState = initialGameplay
-    ? { x: initialGameplay.x * sourceScale, y: initialGameplay.y * sourceScale, width: initialGameplay.w * sourceScale, height: initialGameplay.h * sourceScale }
-    : { x: 0, y: 0, width: Math.round(canvasW * 0.70), height: canvasH }
+    ? { x: initialGameplay.x * sourceScale + CANVAS_PADDING, y: initialGameplay.y * sourceScale + CANVAS_PADDING, width: initialGameplay.w * sourceScale, height: initialGameplay.h * sourceScale }
+    : { x: CANVAS_PADDING, y: CANVAS_PADDING, width: Math.round(canvasW * 0.70), height: canvasH }
   const stackedAvatar: RectState = initialAvatar
-    ? { x: initialAvatar.x * sourceScale, y: initialAvatar.y * sourceScale, width: initialAvatar.w * sourceScale, height: initialAvatar.h * sourceScale }
-    : { x: Math.round(canvasW * 0.72), y: Math.round(canvasH * 0.55), width: Math.round(canvasW * 0.27), height: Math.round(canvasH * 0.43) }
+    ? { x: initialAvatar.x * sourceScale + CANVAS_PADDING, y: initialAvatar.y * sourceScale + CANVAS_PADDING, width: initialAvatar.w * sourceScale, height: initialAvatar.h * sourceScale }
+    : { x: Math.round(canvasW * 0.72) + CANVAS_PADDING, y: Math.round(canvasH * 0.55) + CANVAS_PADDING, width: Math.round(canvasW * 0.27), height: Math.round(canvasH * 0.43) }
 
   const singleDefaultSrc = centeredCropBox9x16(videoDimensions.w, videoDimensions.h)
   const singleDefault: RectState = {
-    x: singleDefaultSrc.x * sourceScale,
-    y: singleDefaultSrc.y * sourceScale,
+    x: singleDefaultSrc.x * sourceScale + CANVAS_PADDING,
+    y: singleDefaultSrc.y * sourceScale + CANVAS_PADDING,
     width: singleDefaultSrc.w * sourceScale,
     height: singleDefaultSrc.h * sourceScale,
   }
@@ -115,10 +116,10 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
   useEffect(() => {
     if (initialized.current) return
     if (initialGameplay) {
-      setGameplay({ x: initialGameplay.x * sourceScale, y: initialGameplay.y * sourceScale, width: initialGameplay.w * sourceScale, height: initialGameplay.h * sourceScale })
+      setGameplay({ x: initialGameplay.x * sourceScale + CANVAS_PADDING, y: initialGameplay.y * sourceScale + CANVAS_PADDING, width: initialGameplay.w * sourceScale, height: initialGameplay.h * sourceScale })
     }
     if (initialAvatar) {
-      setAvatar({ x: initialAvatar.x * sourceScale, y: initialAvatar.y * sourceScale, width: initialAvatar.w * sourceScale, height: initialAvatar.h * sourceScale })
+      setAvatar({ x: initialAvatar.x * sourceScale + CANVAS_PADDING, y: initialAvatar.y * sourceScale + CANVAS_PADDING, width: initialAvatar.w * sourceScale, height: initialAvatar.h * sourceScale })
     }
     if (initialGameplay || initialAvatar) {
       initialized.current = true
@@ -140,13 +141,17 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
   }, [selected])
 
   const toBox = useCallback(
-    (r: RectState): CropBox => ({
-      x: Math.round(r.x / sourceScale),
-      y: Math.round(r.y / sourceScale),
-      w: Math.round(r.width / sourceScale),
-      h: Math.round(r.height / sourceScale),
-    }),
-    [sourceScale],
+    (r: RectState): CropBox => {
+      const result = {
+        x: Math.round((r.x - CANVAS_PADDING) / sourceScale),
+        y: Math.round((r.y - CANVAS_PADDING) / sourceScale),
+        w: Math.round(r.width / sourceScale),
+        h: Math.round(r.height / sourceScale),
+      };
+      console.log('[CropCanvas.toBox] rect:', { x: r.x, y: r.y, w: r.width, h: r.height }, '-> cropBox:', result, 'sourceScale:', sourceScale, 'padding:', CANVAS_PADDING);
+      return result;
+    },
+    [sourceScale, CANVAS_PADDING],
   )
 
   const notify = useCallback(
@@ -213,21 +218,21 @@ export function CropCanvas({ frameUrl, videoDimensions, initialGameplay, initial
           <Stage
             width={canvasW + CANVAS_PADDING * 2}
             height={canvasH + CANVAS_PADDING * 2}
-            style={{ borderRadius: 12 }}
+            style={{ borderRadius: 12, background: 'transparent' }}
             onMouseDown={(e) => { if (e.target === e.target.getStage()) setSelected(null) }}
           >
           <Layer>
             {/* Background: source video frame with padding */}
-            <Rect width={canvasW + CANVAS_PADDING * 2} height={canvasH + CANVAS_PADDING * 2} fill="var(--momiji-surface)" listening={false} />
+            <Rect width={canvasW + CANVAS_PADDING * 2} height={canvasH + CANVAS_PADDING * 2} fill="#1e1e2e" listening={false} />
             {imageStatus === 'loaded' && image
               ? <KonvaImage image={image} x={CANVAS_PADDING} y={CANVAS_PADDING} width={canvasW} height={canvasH} listening={false} />
               : null
             }
             {imageStatus === 'loading' && (
-              <Text text="Loading preview..." x={canvasW / 2 + CANVAS_PADDING} y={canvasH / 2 + CANVAS_PADDING} fill="var(--momiji-subtext)" fontSize={14} offsetX={50} offsetY={10} />
+              <Text text="Loading preview..." x={canvasW / 2 + CANVAS_PADDING} y={canvasH / 2 + CANVAS_PADDING} fill="#cdd6f4" fontSize={14} offsetX={50} offsetY={10} />
             )}
             {imageStatus === 'failed' && (
-              <Text text="Preview unavailable" x={canvasW / 2 + CANVAS_PADDING} y={canvasH / 2 + CANVAS_PADDING} fill="var(--momiji-subtext)" fontSize={14} offsetX={60} offsetY={10} />
+              <Text text="Preview unavailable" x={canvasW / 2 + CANVAS_PADDING} y={canvasH / 2 + CANVAS_PADDING} fill="#cdd6f4" fontSize={14} offsetX={60} offsetY={10} />
             )}
 
             {/* Gameplay box — hidden in camera_only mode */}

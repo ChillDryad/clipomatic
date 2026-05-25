@@ -1,6 +1,8 @@
+import { useState, useEffect } from 'react';
 import { CropCanvas, centeredCropBox9x16 } from "../../components/CropCanvas";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/ToggleGroup";
 import { frameUrl } from "../../api";
+import { cropFrame } from "./utils";
 import type { CropBox } from "../../types";
 
 interface ClipSectionPreviewCropProps {
@@ -41,6 +43,40 @@ export function ClipSectionPreviewCrop({
   const frameSource = segmentPath || originalSource || sourcePath;
   const frameAt = segmentPath ? 0 : clipStart;
   const frameTime = clipStart + 2;
+
+  const [croppedAvatarUrl, setCroppedAvatarUrl] = useState<string | null>(null);
+
+  // Generate cropped avatar when crop box or frame changes
+  useEffect(() => {
+    const generateCroppedAvatar = async () => {
+      const fullFrameUrl = frameUrl(src, frameTime);
+      try {
+        // For camera_only mode: use natural aspect ratio, scale to fill 9:16
+        // For stacked mode: force 9:16 aspect ratio on the avatar crop
+        const forceAspect = layoutMode === 'camera_only' ? undefined : 9 / 16;
+        const avatarPct = {
+          x: ((cropBoxes.avatar.x / videoDimensions.w) * 100).toFixed(1),
+          y: ((cropBoxes.avatar.y / videoDimensions.h) * 100).toFixed(1),
+          w: ((cropBoxes.avatar.w / videoDimensions.w) * 100).toFixed(1),
+          h: ((cropBoxes.avatar.h / videoDimensions.h) * 100).toFixed(1),
+        };
+        console.log('[avatar crop]', cropBoxes.avatar, 'as %:', avatarPct);
+        const cropped = await cropFrame(
+          fullFrameUrl,
+          cropBoxes.avatar,
+          videoDimensions,
+          270,
+          forceAspect,
+        );
+        setCroppedAvatarUrl(cropped);
+      } catch (err) {
+        console.error('Failed to generate cropped avatar:', err);
+        setCroppedAvatarUrl(null);
+      }
+    };
+
+    generateCroppedAvatar();
+  }, [cropBoxes.avatar, src, frameTime, videoDimensions, layoutMode]);
 
   // Calculate the crop region as a percentage of the source video
   const avatarCropPct = {
@@ -87,13 +123,9 @@ export function ClipSectionPreviewCrop({
           {layoutMode === "camera_only" ? (
             <div className="absolute inset-0 overflow-hidden bg-[#181825]">
               <img
-                src={frameUrl(src, frameTime)}
+                src={croppedAvatarUrl || frameUrl(src, frameTime)}
                 alt="camera preview"
-                className="w-full h-full"
-                style={{
-                  objectFit: "cover",
-                  objectPosition: avatarObjPos,
-                }}
+                className="w-full h-full object-cover"
               />
             </div>
           ) : layoutMode === "gameplay_only" ? (
@@ -110,16 +142,12 @@ export function ClipSectionPreviewCrop({
             </div>
           ) : (
             <>
-              {/* Avatar preview (top half) */}
+              {/* Avatar preview (top half) - use cropped image */}
               <div className="absolute left-0 top-0 w-full h-1/2 overflow-hidden bg-[#181825]">
                 <img
-                  src={frameUrl(src, frameTime)}
+                  src={croppedAvatarUrl || frameUrl(src, frameTime)}
                   alt="avatar preview"
-                  className="w-full h-full"
-                  style={{
-                    objectFit: 'cover',
-                    objectPosition: avatarObjPos,
-                  }}
+                  className="w-full h-full object-cover"
                 />
               </div>
               {/* Gameplay preview (bottom half) */}
@@ -171,9 +199,17 @@ export function ClipSectionPreviewCrop({
                   gameplay: { x: 0, y: 0, w: Math.round(videoDimensions.w * 0.70), h: videoDimensions.h },
                   avatar: { x: Math.round(videoDimensions.w * 0.72), y: Math.round(videoDimensions.h * 0.55), w: Math.round(videoDimensions.w * 0.27), h: Math.round(videoDimensions.h * 0.43) },
                 });
+              } else if (mode === "camera_only") {
+                // For camera_only: use a wider crop that captures typical VTuber avatar region
+                // Then scale to fill 9:16 output (with cover behavior)
+                onLayoutChange("camera_only", {
+                  gameplay: { x: 0, y: 0, w: Math.round(videoDimensions.w * 0.60), h: videoDimensions.h },
+                  avatar: { x: Math.round(videoDimensions.w * 0.55), y: 0, w: Math.round(videoDimensions.w * 0.45), h: videoDimensions.h },
+                });
               } else {
+                // gameplay_only: centered 9:16 crop
                 const box = centeredCropBox9x16(videoDimensions.w, videoDimensions.h);
-                onLayoutChange(mode, { gameplay: box, avatar: box });
+                onLayoutChange("gameplay_only", { gameplay: box, avatar: box });
               }
             }}
           >

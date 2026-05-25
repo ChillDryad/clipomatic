@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import threading
+from pathlib import Path
 from typing import Callable
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,47 @@ def _read_stream_to_list(stream, lines_list: list[str]) -> None:
     """Read all lines from a stream into a list. Used for subprocess pipes."""
     for line in stream:
         lines_list.append(line.rstrip())
+
+
+def normalize_video_pts(video_path: str) -> str:
+    """Remux video to reset PTS timeline, removing mid-stream discontinuities.
+
+    Streaming-sourced videos (Twitch, YouTube HLS) can have PTS gaps from ad
+    breaks or stream restarts. These gaps cause ffmpeg's trim/atrim filters to
+    select the wrong segment. Remuxing with -reset_timestamps normalizes PTS
+    to a continuous timeline starting at 0, aligning the video with Whisper's
+    continuous audio timestamps.
+
+    Uses -c copy (no re-encoding) so it's fast and lossless.
+    Overwrites the original file with the normalized version.
+    Falls back to the original if remuxing fails.
+    """
+    suffix = Path(video_path).suffix or ".mp4"
+    normalized = video_path + ".normalized" + suffix
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-c", "copy",
+        "-map_metadata", "-1",
+        "-reset_timestamps", "1",
+        normalized,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            logger.warning(
+                "PTS normalization failed, using original file: %s",
+                result.stderr.strip()[:500],
+            )
+            return video_path
+        os.replace(normalized, video_path)
+        logger.info("Normalized video PTS: %s", video_path)
+        return video_path
+    except Exception as e:
+        logger.warning("PTS normalization error, using original file: %s", e)
+        if os.path.exists(normalized):
+            os.unlink(normalized)
+        return video_path
 
 
 # ---------------------------------------------------------------------------

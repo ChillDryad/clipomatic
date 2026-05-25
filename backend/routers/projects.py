@@ -340,6 +340,13 @@ async def add_clips_to_project(project_id: str, req: AddClipsRequest, user: User
         if project.owner_id != user.id:
             raise HTTPException(status_code=403, detail="Access denied")
 
+        # Delete existing clips to prevent duplicates
+        existing = await session.execute(
+            select(GeneratedClip).where(GeneratedClip.project_id == project_id)
+        )
+        for old_clip in existing.scalars().all():
+            await session.delete(old_clip)
+
         # Add clips to database
         for clip_data in req.clips:
             clip = GeneratedClip(

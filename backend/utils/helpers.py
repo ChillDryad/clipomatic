@@ -364,7 +364,7 @@ def _extract_clip_segment(transcript: dict, clip_start: float, clip_end: float, 
     all_words: list[dict] = []
     for seg in transcript.get("segments", []):
         for w in seg.get("words", []):
-            if w["start"] >= clip_start and w["end"] <= clip_end:
+            if w["start"] < clip_end and w["end"] > clip_start:
                 all_words.append(w)
 
     lines = []

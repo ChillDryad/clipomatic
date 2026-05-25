@@ -66,9 +66,21 @@ async def _sse_stream(
         try:
             result = await asyncio.to_thread(fn, *args, progress_callback=cb, **kwargs)
             logger.debug("SSE stream completed successfully, result: %s", result)
+            # Run on_complete BEFORE queuing done event so it can mutate the result
+            # (e.g., adding project_id). If it fails, log and still send done.
+            if on_complete:
+                try:
+                    await on_complete(result, None)
+                except Exception as exc:
+                    logger.warning("on_complete callback failed: %s", exc)
             queue.put_nowait({"done": True, "result": result})
         except Exception as exc:
             logger.exception("SSE stream error in %s: %s", fn.__name__, exc)
+            if on_complete:
+                try:
+                    await on_complete(None, str(exc))
+                except Exception as exc2:
+                    logger.warning("on_complete callback failed during error: %s", exc2)
             queue.put_nowait({"error": str(exc)})
 
     task = asyncio.create_task(_run())
@@ -90,8 +102,6 @@ async def _sse_stream(
             logger.debug("SSE stream ending: done=%s, error=%s", result is not None, error)
             break
     await task
-    if on_complete:
-        await on_complete(result, error)
 
 
 def _sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:

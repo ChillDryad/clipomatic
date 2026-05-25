@@ -88,6 +88,7 @@ def _build_crop_filter(
 ) -> str:
     return (
         f"{input_label}"
+        f"setpts=PTS-STARTPTS,"
         f"trim=start={start}:end={end},setpts=PTS-STARTPTS,"
         f"crop={crop.w}:{crop.h}:{crop.x}:{crop.y},"
         f"scale={target_w}:{target_h}:flags=bicubic,"
@@ -737,9 +738,10 @@ def render_clip(
                 has_audio = True  # assume audio if we can't probe
 
         # Audio: trim to clip window and reset timestamps
+        # Normalize PTS before atrim so start_time offsets don't shift the window
         if has_audio:
             audio_filter = (
-                f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[aout]"
+                f"[0:a]asetpts=PTS-STARTPTS,atrim=start={start}:end={end},asetpts=PTS-STARTPTS[aout]"
             )
         else:
             audio_filter = ""
@@ -1043,9 +1045,10 @@ def render_timeline(
 
                 # Build overlay filter
                 if is_video:
-                    # Video overlay with trim
+                    # Video overlay with trim — normalize PTS first
                     overlay_filter = (
                         f"[{overlay_idx}:v]"
+                        f"setpts=PTS-STARTPTS,"
                         f"trim=start={overlay_start}:end={overlay_end},setpts=PTS-STARTPTS,"
                         f"scale=iw*{scale}:ih*{scale},"
                         f"rotate={rotation * 3.14159 / 180}:ow=hypot(iw,ih):oh=ow,"
@@ -1083,9 +1086,9 @@ def render_timeline(
         # Audio processing
         audio_filters = []
 
-        # Base audio from video
+        # Base audio from video — normalize PTS before atrim to handle start_time offsets
         audio_filters.append(
-            f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[main_audio]"
+            f"[0:a]asetpts=PTS-STARTPTS,atrim=start={start}:end={end},asetpts=PTS-STARTPTS[main_audio]"
         )
 
         # Mix in additional audio tracks

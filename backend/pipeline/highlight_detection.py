@@ -5,6 +5,7 @@ structured clip candidates based on VTuber brand pillars.
 Optimized for Gemma4 (single-turn JSON output) with fallback to smaller models.
 """
 
+import bisect
 import json
 import logging
 import re
@@ -40,6 +41,7 @@ The brand pillars are:{BRAND_PILLARS}
 - Unresolved moments (clip ends before payoff)
 - Inside jokes that require 10 minutes of context
 - Clips where the best line is cut off
+- Timestamps marked [OVERLAP] — already covered in a previous part; prefer timestamps from non-overlap lines
 
 ## HOOK TYPES TO LOOK FOR
 - **Question hook**: "Wait, did I just...?"
@@ -51,8 +53,8 @@ The brand pillars are:{BRAND_PILLARS}
 ## OUTPUT FORMAT
 Output a JSON array. Each clip object must have exactly these keys:
  "title" (string) — Enticing but not clickbait-y. MUST include exactly 2-3 relevant hashtags at the end.
- "start" (NUMBER) — start time in SECONDS only (e.g., 125.0 NOT "02:05.00")
- "end" (NUMBER) — end time in SECONDS only (e.g., 192.0 NOT "03:12.00")
+ "start" (string) — start timestamp EXACTLY as shown in the transcript (e.g., "2:23:35.00" NOT 8615 or "23:35")
+ "end" (string) — end timestamp EXACTLY as shown in the transcript (e.g., "2:24:15.00" NOT 8655 or "24:15")
  "reason" (string) — one sentence explaining why it's viral
  "virality_score" (integer 0–100) — based on criteria above
  "brand_alignment" (array of strings) — matching pillar names ONLY if clear fit, or empty array
@@ -60,20 +62,20 @@ Output a JSON array. Each clip object must have exactly these keys:
  "description_hashtags" (array of strings) — Tiered hashtags: Broad (#VTuber, #Gaming), Niche (#CozyGaming, #GapMoe), Brand (#MomijiYoru)
  "recommendation_reason" (string) — Detailed explanation referencing transcript content, hook type, and brand pillars.
 
-## TIMESTAMP CONVERSION (CRITICAL)
-Formula: seconds = hours * 3600 + minutes * 60 + seconds
-Examples:
- [0:02:05.00] → 125.0
- [0:00:45.50] → 45.5
- [1:30:00.00] → 5400.0
- [0:01:30.00] → 90.0
+## TIMESTAMP FORMAT (CRITICAL)
+Copy timestamps EXACTLY as they appear in the transcript. Do NOT convert to seconds or drop the hours.
+The transcript uses [H:MM:SS.ss] format — your start/end values MUST match this format WITHOUT the brackets.
+CORRECT: "start": "2:23:35.00"
+WRONG: "start": 8615 (converted to seconds)
+WRONG: "start": "23:35" (dropped hours)
+WRONG: "start": "0:23:35.00" (wrong hours — copy exactly what the transcript shows)
 
-## CLIP LENGTH VALIDATION
-Every clip MUST be 9–90 seconds. Validate: (end - start) >= 9 AND (end - start) <= 90
+## CLIP LENGTH
+Target clip length: 9–90 seconds. Pick start and end timestamps that create clips of this length.
 
 ## EXAMPLE OUTPUT
 [
- {{"title": "She absolutely lost it 💀 #GamingFail #Shorts", "start": 125.0, "end": 192.0, "reason": "Peak emotional outburst with perfect comedic timing", "virality_score": 91, "brand_alignment": ["gap moe / sudden gaming rage"], "description": "Momiji's patience finally snapped and the result was pure chaos. Come hang out on the balcony for more rage-fueled gaming! 🏮", "description_hashtags": ["#VTuber", "#GapMoe", "#CozyGaming", "#MomijiYoru"], "recommendation_reason": "This moment captures a sudden shift from cozy energy to intense gaming rage - the contrast is what makes it viral. The screaming reaction at 2:05 followed by immediate apology hits the 'gap moe' pillar perfectly. Hook type: emotional shift. Comment engagement will be high because viewers love relatable gaming frustration."}}
+ {{"title": "She absolutely lost it 💀 #GamingFail #Shorts", "start": "0:02:05.00", "end": "0:03:12.00", "reason": "Peak emotional outburst with perfect comedic timing", "virality_score": 91, "brand_alignment": ["gap moe / sudden gaming rage"], "description": "Momiji's patience finally snapped and the result was pure chaos. Come hang out on the balcony for more rage-fueled gaming! 🏮", "description_hashtags": ["#VTuber", "#GapMoe", "#CozyGaming", "#MomijiYoru"], "recommendation_reason": "This moment captures a sudden shift from cozy energy to intense gaming rage - the contrast is what makes it viral. The screaming reaction at 2:05 followed by immediate apology hits the 'gap moe' pillar perfectly. Hook type: emotional shift. Comment engagement will be high because viewers love relatable gaming frustration."}}
 ]
 
 Output ONLY the JSON array. No markdown, no explanations, no code fences."""
@@ -86,8 +88,55 @@ _MAX_CHUNK_CHARS = 96_000
 _FALLBACK_MODEL = "phi3:mini"  # or "tinyllama:1.1b" for even faster fallback
 
 
+def _build_timestamp_indices(transcript: dict) -> tuple[list[float], list[float]]:
+    """Build sorted lists of word start and end timestamps from the transcript.
+
+    Returns (starts, ends) where starts are all word-start times and ends are
+    all word-end times. Used to snap clip boundaries to actual speech.
+    """
+    starts: list[float] = []
+    ends: list[float] = []
+    for seg in transcript.get("segments", []):
+        for w in seg.get("words", []):
+            if "start" in w:
+                starts.append(w["start"])
+            if "end" in w:
+                ends.append(w["end"])
+    starts.sort()
+    ends.sort()
+    return starts, ends
+
+
+def _snap_to_index(
+    timestamp: float, index: list[float], tolerance: float = 30.0
+) -> float | None:
+    """Find the nearest timestamp in the index within tolerance.
+
+    Returns the snapped timestamp, or None if no timestamp is within tolerance
+    (likely a hallucination or mis-conversion).
+    """
+    if not index:
+        return None
+
+    pos = bisect.bisect_left(index, timestamp)
+    candidates = []
+    if pos < len(index):
+        candidates.append(index[pos])
+    if pos > 0:
+        candidates.append(index[pos - 1])
+    nearest = min(candidates, key=lambda t: abs(t - timestamp))
+    if abs(nearest - timestamp) <= tolerance:
+        return nearest
+    return None
+
+
 def _chunk_transcript(text: str, max_chars: int = _MAX_CHUNK_CHARS) -> list[str]:
-    """Split transcript text into chunks that fit within token limits."""
+    """Split transcript text into chunks that fit within token limits.
+
+    Overlap lines from the previous chunk are prefixed with [OVERLAP]
+    so the LLM knows they were already covered and should not be selected
+    as clip boundaries.
+    """
     if len(text) <= max_chars:
         return [text]
 
@@ -95,12 +144,14 @@ def _chunk_transcript(text: str, max_chars: int = _MAX_CHUNK_CHARS) -> list[str]
     lines = text.splitlines(keepends=True)
     current = []
     current_len = 0
+    OVERLAP_LINES = 20
 
     for line in lines:
         if current_len + len(line) > max_chars and current:
             chunks.append("".join(current))
-            # Overlap: keep last 20 lines for context continuity
-            current = current[-20:]
+            # Overlap: keep last N lines, marked as already covered
+            overlap = current[-OVERLAP_LINES:]
+            current = [f"[OVERLAP]{ol}" for ol in overlap]
             current_len = sum(len(l) for l in current)
         current.append(line)
         current_len += len(line)
@@ -122,6 +173,33 @@ def _find_lists(obj) -> list:
     return results
 
 
+def _parse_timestamp(value) -> float | None:
+    """Parse a timestamp to float seconds.
+
+    Accepts numeric values (int/float) and time strings in H:MM:SS.ss,
+    MM:SS.ss, or plain float format. Returns None if unparseable.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip().strip("[]")
+    # Try plain float (e.g., "125.0" or "8615")
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    # Try H:MM:SS.ss (e.g., "2:23:35.00" or "0:00:45.50")
+    m = re.match(r"(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)", s)
+    if m:
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    # Try MM:SS.ss (e.g., "23:35" or "22:05.00")
+    m = re.match(r"(\d+):(\d{1,2}(?:\.\d+)?)", s)
+    if m:
+        return int(m.group(1)) * 60 + float(m.group(2))
+    return None
+
+
 def _coerce_clip(c: dict) -> dict | None:
     """
     Try to extract a valid clip from a dict, tolerating varied key names.
@@ -129,8 +207,10 @@ def _coerce_clip(c: dict) -> dict | None:
     """
     # Flexible key aliases models commonly use
     title = (c.get("title") or c.get("clip_title") or c.get("name") or "")
-    start = c.get("start") or c.get("start_time") or c.get("start_seconds")
-    end   = c.get("end")   or c.get("end_time")   or c.get("end_seconds")
+    start_raw = c.get("start") if c.get("start") is not None else (c.get("start_time") if c.get("start_time") is not None else c.get("start_seconds"))
+    end_raw   = c.get("end")   if c.get("end") is not None   else (c.get("end_time")   if c.get("end_time") is not None   else c.get("end_seconds"))
+    start = _parse_timestamp(start_raw)
+    end = _parse_timestamp(end_raw)
     reason = (c.get("reason") or c.get("why") or c.get("description") or c.get("explanation") or "")
     recommendation_reason = c.get("recommendation_reason") or c.get("detailed_reason") or c.get("why_recommended") or ""
     virality_score = c.get("virality_score") or c.get("score") or c.get("viral_score") or 0
@@ -139,29 +219,26 @@ def _coerce_clip(c: dict) -> dict | None:
 
     if not title or start is None or end is None:
         return None
-    try:
-        score = int(virality_score) if virality_score else 0
-        tags = list(hashtags) if isinstance(hashtags, (list, tuple)) else []
-        # brand_alignment may come back as a string ("none", a pillar name, or comma-separated)
-        if isinstance(brand_alignment, str):
-            if brand_alignment.lower() == "none":
-                brand_alignment = []
-            else:
-                brand_alignment = [p.strip() for p in brand_alignment.split(",") if p.strip()]
+    score = int(virality_score) if virality_score else 0
+    tags = list(hashtags) if isinstance(hashtags, (list, tuple)) else []
+    # brand_alignment may come back as a string ("none", a pillar name, or comma-separated)
+    if isinstance(brand_alignment, str):
+        if brand_alignment.lower() == "none":
+            brand_alignment = []
         else:
-            brand_alignment = [str(p) for p in brand_alignment if str(p).lower() != "none"]
-        return {
-            "title": str(title),
-            "start": float(start),
-            "end":   float(end),
-            "reason": str(reason),
-            "recommendation_reason": str(recommendation_reason) if recommendation_reason else None,
-            "virality_score": max(0, min(100, score)),
-            "brand_alignment": brand_alignment,
-            "hashtags": tags,
-        }
-    except (TypeError, ValueError):
-        return None
+            brand_alignment = [p.strip() for p in brand_alignment.split(",") if p.strip()]
+    else:
+        brand_alignment = [str(p) for p in brand_alignment if str(p).lower() != "none"]
+    return {
+        "title": str(title),
+        "start": start,
+        "end":   end,
+        "reason": str(reason),
+        "recommendation_reason": str(recommendation_reason) if recommendation_reason else None,
+        "virality_score": max(0, min(100, score)),
+        "brand_alignment": brand_alignment,
+        "hashtags": tags,
+    }
 
 
 def _parse_clips(raw: str) -> list[dict]:
@@ -287,7 +364,7 @@ def detect_highlights(
         base_url: LLM base URL
         model: Primary model name (e.g., "gemma4:latest")
         progress_callback: Progress callback
-        timeout_per_chunk: Timeout per LLM call in seconds (default 120s)
+        timeout_per_chunk: Timeout per LLM call in seconds (default 300s)
         fallback_model: Fallback model name when primary fails (default "phi3:mini")
     """
     from openai import OpenAI
@@ -368,6 +445,37 @@ def detect_highlights(
         ]
         if len(all_clips) < before:
             _cb(0.95, f"Filtered {before - len(all_clips)} clips outside video duration ({video_duration:.0f}s)")
+
+    # Snap clip timestamps to nearest word boundaries from the transcript.
+    # Snap start to nearest word-start and end to nearest word-end so clips
+    # begin and end on actual speech boundaries.
+    start_idx, end_idx = _build_timestamp_indices(transcript)
+    if start_idx and end_idx:
+        before = len(all_clips)
+        snapped = []
+        for c in all_clips:
+            start_snap = _snap_to_index(c["start"], start_idx)
+            end_snap = _snap_to_index(c["end"], end_idx)
+            if start_snap is None or end_snap is None:
+                logger.warning(
+                    f"Dropping clip {c.get('title', '?')}: "
+                    f"start={c['start']} snap={start_snap}, end={c['end']} snap={end_snap} "
+                    f"— too far from any word in transcript"
+                )
+                continue
+            duration = end_snap - start_snap
+            if duration < 9 or duration > 90:
+                logger.warning(
+                    f"Dropping clip {c.get('title', '?')}: "
+                    f"snapped duration {duration:.1f}s outside 9-90s range"
+                )
+                continue
+            c["start"] = start_snap
+            c["end"] = end_snap
+            snapped.append(c)
+        all_clips = snapped
+        if len(all_clips) < before:
+            _cb(0.95, f"Snapped timestamps, filtered {before - len(all_clips)} clips")
 
     # Deduplicate by time-window overlap (>50% of the shorter clip's duration).
     # When two clips overlap, keep the one with the higher virality_score.

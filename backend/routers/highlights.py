@@ -48,6 +48,7 @@ async def highlights(req: HighlightsRequest):
         timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "300"))
         # Fallback model when primary times out (smaller = faster)
         fallback_model = os.environ.get("HIGHLIGHT_FALLBACK_MODEL", "phi3:mini")
+
         async for event_str in _sse_stream(
             highlight_detection.detect_highlights,
             transcript=req.transcript,

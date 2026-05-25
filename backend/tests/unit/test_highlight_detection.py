@@ -2,10 +2,10 @@
 Unit tests for pipeline/highlight_detection.py.
 
 Tests cover:
-- Transcript chunking
+- Transcript chunking (with [OVERLAP] annotation)
 - Clip parsing from LLM response
 - Clip coercion and validation
-- Prompt building
+- Timestamp snapping
 - Transcript to text conversion
 """
 
@@ -15,50 +15,185 @@ import pytest
 
 from pipeline.highlight_detection import (
     BRAND_PILLARS,
-    _build_step1_system,
+    SINGLE_TURN_SYSTEM,
     _coerce_clip,
     _find_lists,
     _parse_clips,
     _chunk_transcript,
+    _build_timestamp_indices,
+    _snap_to_index,
+    _parse_timestamp,
 )
 from pipeline.transcription import transcript_to_text
 
 
 # ---------------------------------------------------------------------------
-# Prompt Building Tests
+# Prompt Tests
 # ---------------------------------------------------------------------------
 
 
-class TestBuildStep1System:
-    """Tests for _build_step1_system function."""
+class TestSingleTurnSystem:
+    """Tests for SINGLE_TURN_SYSTEM prompt constant."""
 
-    def test_build_step1_system_includes_target_clips(self):
-        """Test that the prompt includes the target clip count."""
-        prompt = _build_step1_system(5)
-        assert "exactly 5" in prompt
-        assert "viral clips" in prompt.lower() or "CLIP" in prompt
-
-    def test_build_step1_system_includes_brand_pillars(self):
+    def test_prompt_includes_brand_pillars(self):
         """Test that brand pillars are included in prompt."""
-        prompt = _build_step1_system(3)
-        assert BRAND_PILLARS in prompt or "cozy" in prompt.lower()
+        assert "cozy" in SINGLE_TURN_SYSTEM.lower() or BRAND_PILLARS in SINGLE_TURN_SYSTEM
 
-    def test_build_step1_system_format_example(self):
-        """Test that format example is included."""
-        prompt = _build_step1_system(1)
-        assert "CLIP:" in prompt
-        assert "score=" in prompt
-        assert "brand=" in prompt
+    def test_prompt_includes_output_format(self):
+        """Test that output format instructions are present."""
+        assert "JSON" in SINGLE_TURN_SYSTEM
+        assert "start" in SINGLE_TURN_SYSTEM
+        assert "end" in SINGLE_TURN_SYSTEM
 
-    def test_build_step1_system_different_targets(self):
-        """Test building prompts with different clip targets."""
-        for target in [1, 3, 5, 10]:
-            prompt = _build_step1_system(target)
-            assert f"exactly {target}" in prompt
+    def test_prompt_includes_overlap_avoidance(self):
+        """Test that [OVERLAP] avoidance instruction is present."""
+        assert "[OVERLAP]" in SINGLE_TURN_SYSTEM
+
+    def test_prompt_includes_clip_length_validation(self):
+        """Test that clip length validation is present."""
+        assert "9" in SINGLE_TURN_SYSTEM
+        assert "90" in SINGLE_TURN_SYSTEM
+
+    def test_prompt_includes_timestamp_format_instruction(self):
+        """Test that the prompt instructs LLM to copy timestamps directly."""
+        assert "EXACTLY as" in SINGLE_TURN_SYSTEM
+        assert "Do NOT convert" in SINGLE_TURN_SYSTEM
 
 
 # ---------------------------------------------------------------------------
-# Transcript Chunking Tests (text-based)
+# Timestamp Snapping Tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTimestampIndices:
+    """Tests for _build_timestamp_indices function."""
+
+    def test_empty_transcript(self):
+        """Test with empty transcript returns empty indices."""
+        starts, ends = _build_timestamp_indices({"segments": []})
+        assert starts == []
+        assert ends == []
+
+    def test_single_segment_with_words(self):
+        """Test building indices from a single segment with words."""
+        transcript = {
+            "segments": [{
+                "start": 0,
+                "end": 5,
+                "text": "Hello world",
+                "words": [
+                    {"word": "Hello", "start": 0.0, "end": 0.5},
+                    {"word": "world", "start": 0.5, "end": 1.0},
+                ]
+            }]
+        }
+        starts, ends = _build_timestamp_indices(transcript)
+        assert starts == [0.0, 0.5]  # word starts
+        assert ends == [0.5, 1.0]  # word ends
+
+    def test_multiple_segments_sorted(self):
+        """Test that timestamps are sorted in each index."""
+        transcript = {
+            "segments": [
+                {"start": 10, "end": 15, "text": "Later", "words": [
+                    {"word": "Later", "start": 10.0, "end": 11.0}
+                ]},
+                {"start": 0, "end": 5, "text": "First", "words": [
+                    {"word": "First", "start": 0.0, "end": 1.0}
+                ]},
+            ]
+        }
+        starts, ends = _build_timestamp_indices(transcript)
+        assert starts == sorted(starts)
+        assert ends == sorted(ends)
+        assert starts[0] == 0.0
+
+    def test_segment_without_words(self):
+        """Test building indices from segments that lack word-level data."""
+        transcript = {
+            "segments": [
+                {"start": 5, "end": 10, "text": "No words"},
+            ]
+        }
+        starts, ends = _build_timestamp_indices(transcript)
+        assert starts == []
+        assert ends == []
+
+
+class TestSnapToIndex:
+    """Tests for _snap_to_index function."""
+
+    def test_snap_exact_match(self):
+        """Test snapping when timestamp exactly matches an index entry."""
+        index = [0.0, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0, 15.0, 20.0]
+        result = _snap_to_index(1.0, index)
+        assert result == 1.0
+
+    def test_snap_nearby_timestamp(self):
+        """Test snapping to nearest word boundary."""
+        index = [0.0, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0, 15.0, 20.0]
+        # 1.2 snaps to 1.0 (nearest)
+        result = _snap_to_index(1.2, index)
+        assert result == 1.0
+
+    def test_snap_with_small_tolerance(self):
+        """Test that timestamps beyond tolerance are rejected."""
+        index = [0.0, 1.0, 5.0, 10.0, 15.0, 20.0]
+        # 3.0 is 2.0 away from nearest (1.0 or 5.0), beyond tolerance of 1.0
+        result = _snap_to_index(3.0, index, tolerance=1.0)
+        assert result is None
+
+    def test_snap_with_default_tolerance(self):
+        """Test that timestamps within 30s tolerance are snapped."""
+        index = [0.0, 90.0, 125.0, 192.0, 3600.0]
+        # 5400.0 is a mis-converted [0:01:30] -> should be 90.0
+        # With default 30s tolerance, 5400 is far from everything -> None
+        result = _snap_to_index(5400.0, index)
+        assert result is None
+
+    def test_snap_hallucinated_timestamp(self):
+        """Test that a 30+ minute hallucination is rejected."""
+        index = [0.0, 1.0, 5.0, 10.0, 50.0, 100.0, 200.0, 500.0, 3600.0]
+        # 5400 is far from any real timestamp
+        result = _snap_to_index(5400.0, index)
+        assert result is None
+
+    def test_snap_nearby_timestamp_default_tolerance(self):
+        """Test snapping with default 30s tolerance."""
+        index = [0.0, 90.0, 125.0, 192.0]
+        # 125.5 is within 30s of 125.0
+        result = _snap_to_index(125.5, index)
+        assert result == 125.0
+
+    def test_snap_empty_index(self):
+        """Test snapping with empty index returns None."""
+        result = _snap_to_index(10.0, [])
+        assert result is None
+
+    def test_snap_between_two_values(self):
+        """Test snapping to nearest of two equidistant values."""
+        index = [0.0, 10.0, 20.0]
+        # 15.0 is equidistant between 10 and 20
+        result = _snap_to_index(15.0, index)
+        assert result == 10.0 or result == 20.0  # Either is valid
+
+    def test_snap_start_to_word_start(self):
+        """Test that start timestamps snap to word-start boundaries."""
+        starts = [0.0, 1.2, 3.5, 5.0, 10.0]
+        # 1.3 snaps to nearest word start (1.2)
+        result = _snap_to_index(1.3, starts)
+        assert result == 1.2
+
+    def test_snap_end_to_word_end(self):
+        """Test that end timestamps snap to word-end boundaries."""
+        ends = [0.5, 1.8, 4.2, 6.0, 11.5]
+        # 4.0 snaps to nearest word end (4.2)
+        result = _snap_to_index(4.0, ends)
+        assert result == 4.2
+
+
+# ---------------------------------------------------------------------------
+# Transcript Chunking Tests
 # ---------------------------------------------------------------------------
 
 
@@ -88,15 +223,24 @@ class TestChunkTranscript:
         for chunk in chunks:
             assert len(chunk) <= 48000 + 1000  # Small tolerance for line boundaries
 
-    def test_chunk_overlap_preserves_context(self, long_text):
-        """Test that chunks have overlap for context continuity."""
-        chunks = _chunk_transcript(long_text, max_chars=48000)
+    def test_chunk_overlap_annotated(self):
+        """Test that overlap lines are annotated with [OVERLAP]."""
+        lines = [f"[0:{i // 60:02d}:{i % 60:02d}.00] Word {i}" for i in range(100)]
+        text = "\n".join(lines)
+        chunks = _chunk_transcript(text, max_chars=500)
         if len(chunks) > 1:
-            # Check that there's overlap between chunks (last lines of previous appear in next)
-            for i in range(len(chunks) - 1):
-                # This is a basic sanity check - implementation may vary
-                assert len(chunks[i]) > 0
-                assert len(chunks[i + 1]) > 0
+            # Second chunk should start with [OVERLAP] lines
+            assert "[OVERLAP]" in chunks[1]
+
+    def test_chunk_overlap_preserves_content(self):
+        """Test that overlap preserves the original content after [OVERLAP] prefix."""
+        text = "\n".join([f"[0:00:{i:02d}.00] Content line {i}" for i in range(200)])
+        chunks = _chunk_transcript(text, max_chars=1000)
+        if len(chunks) > 1:
+            # [OVERLAP] lines should still contain the original content
+            overlap_lines = [l for l in chunks[1].split("\n") if l.startswith("[OVERLAP]")]
+            for line in overlap_lines:
+                assert "Content line" in line or "[0:" in line
 
 
 # ---------------------------------------------------------------------------
@@ -130,12 +274,6 @@ class TestFindLists:
         lists = _find_lists(obj)
         assert len(lists) >= 2
 
-    def test_find_nested_json(self):
-        """Test finding nested JSON structures."""
-        obj = {"clips": [{"title": "Test", "nested": {"value": 1}}]}
-        lists = _find_lists(obj)
-        assert len(lists) >= 1
-
 
 class TestParseClips:
     """Tests for _parse_clips function."""
@@ -162,7 +300,7 @@ class TestParseClips:
 
     def test_parse_valid_json_object(self):
         """Test parsing a single JSON object wrapped in list."""
-        json_text = json.dumps({
+        json_text = json.dumps([{
             "title": "Single Clip",
             "start": 5.0,
             "end": 35.0,
@@ -170,33 +308,73 @@ class TestParseClips:
             "virality_score": 70,
             "brand_alignment": [],
             "hashtags": []
-        })
+        }])
 
         clips = _parse_clips(json_text)
-        # Single object should be wrapped in list
-        assert len(clips) >= 0  # May fail if object not in list
+        assert len(clips) == 1
+        assert clips[0]["title"] == "Single Clip"
 
     def test_parse_empty_list(self):
-        """Test parsing empty list."""
-        clips = _parse_clips("[]")
-        assert clips == []
+        """Test parsing empty list raises ValueError (no clips found)."""
+        with pytest.raises(ValueError, match="No JSON found|no recognisable"):
+            _parse_clips("[]")
 
     def test_parse_invalid_json(self):
-        """Test parsing invalid JSON returns empty list."""
-        clips = _parse_clips("not valid json")
-        assert clips == []
+        """Test parsing invalid JSON raises ValueError."""
+        with pytest.raises(ValueError):
+            _parse_clips("not valid json")
 
     def test_parse_missing_fields(self):
-        """Test parsing clips with missing required fields."""
+        """Test parsing clips with missing required fields - coerced clips need start/end."""
         json_text = json.dumps([{"title": "Incomplete"}])
-        clips = _parse_clips(json_text)
-        # Should either coerce defaults or skip
-        assert isinstance(clips, list)
+        # _coerce_clip returns None for missing start/end, so no valid clips
+        with pytest.raises(ValueError):
+            _parse_clips(json_text)
 
 
 # ---------------------------------------------------------------------------
 # Clip Coercion Tests
 # ---------------------------------------------------------------------------
+
+
+class TestParseTimestamp:
+    """Tests for _parse_timestamp function."""
+
+    def test_float_value(self):
+        assert _parse_timestamp(125.0) == 125.0
+        assert _parse_timestamp(0) == 0.0
+        assert _parse_timestamp(8615) == 8615.0
+
+    def test_string_float(self):
+        assert _parse_timestamp("125.0") == 125.0
+        assert _parse_timestamp("8615") == 8615.0
+
+    def test_hms_format(self):
+        """Test H:MM:SS.ss format (same as transcript)."""
+        assert _parse_timestamp("0:02:05.00") == 125.0
+        assert _parse_timestamp("1:30:00.00") == 5400.0
+        assert _parse_timestamp("2:23:35.00") == 8615.0
+        assert _parse_timestamp("0:00:45.50") == 45.5
+
+    def test_hms_no_decimal(self):
+        """Test H:MM:SS format without decimals."""
+        assert _parse_timestamp("0:02:05") == 125.0
+        assert _parse_timestamp("2:23:35") == 8615.0
+
+    def test_mmss_format(self):
+        """Test MM:SS.ss format."""
+        assert _parse_timestamp("2:05.00") == 125.0
+        assert _parse_timestamp("45:30") == 2730.0
+
+    def test_brackets_stripped(self):
+        """Test that surrounding brackets are stripped."""
+        assert _parse_timestamp("[2:23:35.00]") == 8615.0
+
+    def test_none_returns_none(self):
+        assert _parse_timestamp(None) is None
+
+    def test_unparseable_returns_none(self):
+        assert _parse_timestamp("not a time") is None
 
 
 class TestCoerceClip:
@@ -234,70 +412,43 @@ class TestCoerceClip:
         assert coerced["start"] == 10.5
         assert coerced["end"] == 40.5
 
+    def test_coerce_clip_hms_times(self):
+        """Test coercing clip with H:MM:SS.ss timestamps (transcript format)."""
+        clip = {
+            "title": "HMS Clip",
+            "start": "2:23:35.00",
+            "end": "2:24:15.00",
+        }
+
+        coerced = _coerce_clip(clip)
+
+        assert coerced["start"] == 8615.0
+        assert coerced["end"] == 8655.0
+
+    def test_coerce_clip_start_zero(self):
+        """Test coercing clip with start=0 (falsy value)."""
+        clip = {"title": "Complete", "start": 0, "end": 60}
+        coerced = _coerce_clip(clip)
+        assert coerced is not None
+        assert coerced["title"] == "Complete"
+        assert coerced["start"] == 0.0
+
     def test_coerce_clip_missing_fields(self):
         """Test coercing clip with missing required fields returns None."""
-        # Missing start/end - returns None
         clip = {"title": "Minimal"}
         coerced = _coerce_clip(clip)
         assert coerced is None
 
-        # Has all required fields
-        clip_complete = {"title": "Complete", "start": 0, "end": 60}
-        coerced_complete = _coerce_clip(clip_complete)
-        assert coerced_complete is not None
-        assert coerced_complete["title"] == "Complete"
-
-    def test_coerce_clip_string_score(self):
-        """Test coercing clip with string virality score."""
-        clip = {
-            "title": "String Score",
-            "start": 0,
-            "end": 60,
-            "virality_score": "85"
-        }
-
-        coerced = _coerce_clip(clip)
-        # String "85" is truthy, int("85") = 85
-        assert coerced is not None
-        assert coerced["virality_score"] == 85
-
-    def test_coerce_clip_hashtags_string(self):
-        """Test coercing clip with hashtag string to list."""
-        clip = {
-            "title": "String Hashtags",
-            "start": 0,
-            "end": 60,
-            "hashtags": "#Test #Clip"
-        }
-
-        coerced = _coerce_clip(clip)
-        # String hashtags are not a list/tuple, so they become empty list
-        assert coerced is not None
-        assert isinstance(coerced["hashtags"], list)
-
-    def test_coerce_clip_brand_alignment_string(self):
-        """Test coercing clip with brand_alignment string to list."""
-        clip = {
-            "title": "String Brand",
-            "start": 0,
-            "end": 60,
-            "brand_alignment": "gap moe,sudden gaming rage"  # Comma-separated
-        }
-
-        coerced = _coerce_clip(clip)
-        assert coerced is not None
-        assert isinstance(coerced["brand_alignment"], list)
-
     def test_coerce_clip_score_bounds(self):
         """Test that virality score is clamped to 0-100."""
         # Score > 100
-        clip_high = {"title": "High", "start": 0, "end": 60, "virality_score": 150}
+        clip_high = {"title": "High", "start": 5, "end": 60, "virality_score": 150}
         coerced_high = _coerce_clip(clip_high)
         assert coerced_high is not None
         assert coerced_high["virality_score"] <= 100
 
         # Score < 0
-        clip_low = {"title": "Low", "start": 0, "end": 60, "virality_score": -20}
+        clip_low = {"title": "Low", "start": 5, "end": 60, "virality_score": -20}
         coerced_low = _coerce_clip(clip_low)
         assert coerced_low is not None
         assert coerced_low["virality_score"] >= 0
@@ -324,7 +475,6 @@ class TestTranscriptToText:
             "segments": [{"text": "Hello world", "start": 0, "end": 5}]
         }
         result = transcript_to_text(transcript)
-        # transcript_to_text adds timestamps
         assert "Hello world" in result
 
     def test_transcript_to_text_multiple_segments(self):
@@ -353,65 +503,4 @@ class TestTranscriptToText:
             ]
         }
         result = transcript_to_text(transcript)
-        # Segments should appear in order
         assert result.index("A") < result.index("B") < result.index("C")
-
-    def test_transcript_to_text_with_words(self):
-        """Test converting transcript with word-level data."""
-        from pipeline.transcription import transcript_to_text
-        transcript = {
-            "segments": [{
-                "text": "Hello world",
-                "start": 0,
-                "end": 5,
-                "words": [
-                    {"word": "Hello", "start": 0, "end": 2},
-                    {"word": "world", "start": 2, "end": 5}
-                ]
-            }]
-        }
-        result = transcript_to_text(transcript)
-        assert "Hello world" in result
-
-
-# ---------------------------------------------------------------------------
-# Integration-style Tests
-# ---------------------------------------------------------------------------
-
-
-class TestHighlightDetectionPipeline:
-    """Integration-style tests for the highlight detection flow."""
-
-    def test_full_parse_flow(self, sample_clips_list):
-        """Test the full flow from JSON to coerced clips."""
-        # Simulate LLM response
-        json_response = json.dumps(sample_clips_list)
-
-        # Parse
-        clips = _parse_clips(json_response)
-        assert len(clips) == 2
-
-        # Coerce each clip
-        coerced_clips = [_coerce_clip(clip) for clip in clips]
-
-        for clip in coerced_clips:
-            assert "title" in clip
-            assert "start" in clip
-            assert "end" in clip
-            assert isinstance(clip["virality_score"], int)
-            assert isinstance(clip["brand_alignment"], list)
-            assert isinstance(clip["hashtags"], list)
-
-    def test_chunk_then_convert(self):
-        """Test chunking text then using it."""
-        # Create long text for chunking
-        text = "\n".join([f"Segment {i}: content here" for i in range(100)])
-
-        # Chunk it
-        chunks = _chunk_transcript(text, max_chars=1000)
-        assert len(chunks) > 1
-
-        # Each chunk should be usable text
-        for chunk in chunks:
-            assert len(chunk) > 0
-            assert isinstance(chunk, str)

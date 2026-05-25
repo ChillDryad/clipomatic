@@ -178,7 +178,7 @@ async def ingest_upload(
             )
             session.add(project)
             await session.commit()
-            result["project_id"] = project.id
+            result["projectId"] = project.id
 
     return _sse_response(_sse_stream(_save_file_sync, on_complete=_on_upload_complete))
 
@@ -252,7 +252,7 @@ async def ingest_url(req: UrlRequest, user: User = Depends(get_current_user)):
             )
             session.add(project)
             await session.commit()
-            result["project_id"] = project.id
+            result["projectId"] = project.id
 
     return _sse_response(_sse_stream(_download_with_title, on_complete=_on_download_complete))
 
@@ -329,7 +329,7 @@ async def ingest_twitch_stream(req: UrlRequest, user: User = Depends(get_current
             )
             session.add(project)
             await session.commit()
-            result["project_id"] = project.id
+            result["projectId"] = project.id
 
     return _sse_response(_sse_stream(_stream_with_title, on_complete=_on_stream_complete))
 

@@ -186,7 +186,7 @@ export function VideoProjectPage() {
       const model = configRef.current?.llm_model || "llama3.1:8b";
       const controller = getAbortController("redetect");
 
-      await detectHighlights(
+      const newClips = await detectHighlights(
         transcript,
         model,
         project.source_path,
@@ -194,8 +194,17 @@ export function VideoProjectPage() {
         projectId,
       );
 
+      // Use the returned clips directly instead of re-fetching from the database,
+      // because the backend DB write may not have committed yet (race condition).
+      const normalizedClips = newClips.map((clip: any, i: number) => ({
+        ...clip,
+        start: clip.start ?? clip.start_time,
+        end: clip.end ?? clip.end_time,
+        id: clip.id || `clip-${i}`,
+      }));
+      setClips(normalizedClips);
+
       setRedetectProgress(null);
-      await loadProject(projectId!);
     } catch (err) {
       setRedetectProgress(null);
       if (!String(err).includes("cancelled")) {
