@@ -23,10 +23,56 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
+      - CELERY_BROKER_URL=redis://redis-dev:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis-dev:6379/1
     volumes:
       - ./workspace-dev:/app/workspace
     networks:
       - momiji-llm-network
+    depends_on:
+      redis-dev:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis-dev:
+    image: redis:7-alpine
+    container_name: momiji-redis-dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - momiji-llm-network
+    restart: unless-stopped
+
+  celery-worker-dev:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: python:3.10-slim
+    container_name: momiji-celery-dev
+    command: celery -A celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-1}
+    environment:
+      - WORKSPACE_DIR=/app/workspace
+      - CELERY_BROKER_URL=redis://redis-dev:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis-dev:6379/1
+      - WHISPER_MODEL=${WHISPER_MODEL:-large-v3}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama-shared:11434/v1}
+      - LLM_API_KEY=${LLM_API_KEY:-ollama}
+      - LLM_MODEL=${LLM_MODEL:-llama3}
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
+    volumes:
+      - ./workspace-dev:/app/workspace
+    networks:
+      - momiji-llm-network
+    depends_on:
+      redis-dev:
+        condition: service_healthy
     restart: unless-stopped
 
   momiji-frontend-dev:
