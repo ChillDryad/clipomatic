@@ -422,7 +422,9 @@ class VideoProject(Base):
     original_source: Mapped[str | None] = mapped_column(String, nullable=True)  # Original URL (YouTube/Twitch/Kick)
     original_filename: Mapped[str] = mapped_column(String, nullable=False)
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
-    status: Mapped[str] = mapped_column(String, default="pending")  # pending, processing, complete, failed
+    status: Mapped[str] = mapped_column(
+        String, default="pending", index=True
+    )  # pending, loaded, queued, transcribing, transcribed, detecting, completed, rendering, rendered, failed, cancelled
     thumbnail_path: Mapped[str | None] = mapped_column(String, nullable=True)  # path to user-uploaded or auto-generated thumbnail image
     created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
     updated_at: Mapped[float] = mapped_column(Float, default=lambda: time.time(), onupdate=lambda: time.time())
@@ -491,3 +493,64 @@ VideoProject.transcript = relationship(
     lazy="selectin",
     uselist=False,
 )
+
+
+# ---------------------------------------------------------------------------
+# Pipeline Job Queue Models
+# ---------------------------------------------------------------------------
+
+
+class PipelineJob(Base):
+    """Queued pipeline job for automated processing (transcribe → highlights)."""
+    __tablename__ = "pipeline_jobs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: uuid.uuid4().hex)
+    project_id: Mapped[str] = mapped_column(
+        String, ForeignKey("video_projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    owner_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True
+    )
+    celery_task_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    steps: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array, e.g. ["transcribe", "highlights"]
+    current_step: Mapped[int] = mapped_column(default=0)
+    status: Mapped[str] = mapped_column(
+        String, default="queued", index=True
+    )  # queued, running, paused, completed, failed, cancelled
+    config: Mapped[str] = mapped_column(Text, nullable=False)  # JSON: whisper_model, llm_model, device, etc.
+    step_progress: Mapped[float] = mapped_column(Float, default=0.0)
+    step_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failed_step: Mapped[str | None] = mapped_column(String, nullable=True)
+    retry_count: Mapped[int] = mapped_column(default=0)
+    max_retries: Mapped[int] = mapped_column(default=2)
+    priority: Mapped[int] = mapped_column(default=0)
+    queued_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
+    started_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    completed_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    auto_advance: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
+    updated_at: Mapped[float] = mapped_column(Float, default=lambda: time.time(), onupdate=lambda: time.time())
+
+    project: Mapped[VideoProject] = relationship()
+    pipeline_events: Mapped[list["PipelineEvent"]] = relationship(
+        back_populates="job", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class PipelineEvent(Base):
+    """Progress event for a pipeline job. Enables catch-up after disconnect."""
+    __tablename__ = "pipeline_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: uuid.uuid4().hex)
+    job_id: Mapped[str] = mapped_column(
+        String, ForeignKey("pipeline_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String, nullable=False)  # progress, step_start, step_done, error
+    step: Mapped[str | None] = mapped_column(String, nullable=True)
+    progress: Mapped[float | None] = mapped_column(Float, nullable=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON for structured data
+    created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
+
+    job: Mapped[PipelineJob] = relationship(back_populates="pipeline_events")

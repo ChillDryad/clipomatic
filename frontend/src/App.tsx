@@ -8,6 +8,7 @@ import { PipelinePage } from './pages/PipelinePage'
 import { VideoProjectPage } from './pages/VideoProjectPage'
 import { TimelineEditorPage } from './pages/TimelineEditorPage'
 import { SchedulePage } from './pages/SchedulePage'
+import { QueuePage } from './pages/QueuePage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { TeamListPage } from './pages/TeamListPage'
@@ -122,6 +123,16 @@ export default function App() {
                 <ProtectedRoute>
                   <PageLayout>
                     <SchedulePage />
+                  </PageLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/queue"
+              element={
+                <ProtectedRoute>
+                  <PageLayout>
+                    <QueuePage />
                   </PageLayout>
                 </ProtectedRoute>
               }

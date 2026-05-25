@@ -1,12 +1,27 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useTheme } from '../../hooks/useTheme'
 import { MomijiLogo } from '../ui/MomijiLogo'
 import { SettingsModal } from './SettingsModal'
+import { getPipelineQueueStatus } from '../../api'
 
 export function Navbar() {
   const { theme, toggleTheme } = useTheme()
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [queueCount, setQueueCount] = useState(0)
+
+  useEffect(() => {
+    let mounted = true
+    const check = async () => {
+      try {
+        const status = await getPipelineQueueStatus()
+        if (mounted) setQueueCount(status.queued + status.running)
+      } catch { /* ignore */ }
+    }
+    check()
+    const interval = setInterval(check, 15000)
+    return () => { mounted = false; clearInterval(interval) }
+  }, [])
 
   return (
     <>
@@ -35,6 +50,22 @@ export function Navbar() {
           </button>
 
           {/* Schedule */}
+          <Link
+            to="/queue"
+            className="btn-ghost p-2 rounded-lg relative"
+            title="Pipeline Queue"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+            </svg>
+            {queueCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 bg-blue-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                {queueCount > 9 ? '9+' : queueCount}
+              </span>
+            )}
+          </Link>
+
+          {/* Schedule Posts */}
           <Link
             to="/schedule"
             className="btn-ghost p-2 rounded-lg"

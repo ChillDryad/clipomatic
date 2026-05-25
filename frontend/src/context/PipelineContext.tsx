@@ -38,6 +38,10 @@ interface PipelineContextValue {
   setRenderedClip: (clipKey: string, videoPath: string) => void
   improvedSegments: Map<string, Transcript>
   setImprovedSegments: (key: string, segments: Transcript) => void
+  autoPipelineEnabled: boolean
+  setAutoPipelineEnabled: (v: boolean) => void
+  activeJobId: string | null
+  setActiveJobId: (id: string | null) => void
 }
 
 const PipelineContext = createContext<PipelineContextValue | null>(null)
@@ -107,6 +111,10 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
   const [renderedClips, setRenderedClipsState] = useState<Map<string, string>>(new Map())
   const [improvedSegments, setImprovedSegmentsState] = useState<Map<string, Transcript>>(new Map())
   const [projectId, setProjectIdState] = useState<string | null>(null)
+  const [autoPipelineEnabled, setAutoPipelineEnabledState] = useState<boolean>(
+    localStorage.getItem('autoPipelineEnabled') === 'true'
+  )
+  const [activeJobId, setActiveJobId] = useState<string | null>(null)
 
   const updateClip = useCallback((index: number, patch: Partial<Clip>) => {
     setClipsState(prev => {
@@ -171,9 +179,40 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     setConfigState(prev => ({ ...prev, ...partial }))
   }, [])
 
+  const setAutoPipelineEnabled = useCallback((v: boolean) => {
+    localStorage.setItem('autoPipelineEnabled', String(v))
+    setAutoPipelineEnabledState(v)
+  }, [])
+
   const setProjectId = useCallback((id: string | null) => {
     setProjectIdState(id)
   }, [])
+
+  // Auto-enqueue when auto-pipeline is enabled and a new project is loaded
+  useEffect(() => {
+    if (!autoPipelineEnabled || !projectId || !source || activeJobId) return
+    // Skip if transcript already exists (project was restored)
+    if (transcript) return
+
+    const doEnqueue = async () => {
+      try {
+        const { enqueuePipelineJob } = await import('../api')
+        const result = await enqueuePipelineJob({
+          project_id: projectId,
+          steps: ['transcribe', 'highlights'],
+          config: {
+            whisper_model: config.whisperModel,
+            device: config.whisperDevice,
+            llm_model: config.llmModel,
+          },
+        })
+        setActiveJobId(result.job_id)
+      } catch (err) {
+        console.error('Auto-enqueue failed:', err)
+      }
+    }
+    doEnqueue()
+  }, [autoPipelineEnabled, projectId, source, activeJobId, config.whisperModel, config.whisperDevice, config.llmModel])
 
   return (
     <PipelineContext.Provider
@@ -204,6 +243,10 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
         setImprovedSegments,
         projectId,
         setProjectId,
+        autoPipelineEnabled,
+        setAutoPipelineEnabled,
+        activeJobId,
+        setActiveJobId,
       }}
     >
       {children}

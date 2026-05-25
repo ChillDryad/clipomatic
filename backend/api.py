@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
     """FastAPI lifespan — runs on startup and shutdown."""
     from db import init_db
     from scheduler import recover_scheduled_jobs, start_scheduler
+    from pipeline_dispatcher import PipelineDispatcher
 
     # Set up rate limiter state
     app.state.limiter = limiter
@@ -44,7 +45,15 @@ async def lifespan(app: FastAPI):
     await init_db()
     start_scheduler()
     await recover_scheduled_jobs()
+
+    # Start pipeline dispatcher (round-robin fairness, Celery dispatch)
+    dispatcher = PipelineDispatcher()
+    app.state.pipeline_dispatcher = dispatcher
+    await dispatcher.start()
+
     yield
+
+    await dispatcher.stop()
     from scheduler import stop_scheduler
     stop_scheduler()
 
@@ -238,6 +247,7 @@ from routers import (
     teams_router,
     thumbnails_router,
 )
+from routers.pipeline import router as pipeline_router
 
 app.include_router(config_router)
 app.include_router(auth_router)
@@ -254,6 +264,7 @@ app.include_router(render_router)
 app.include_router(oauth_router)
 app.include_router(teams_router)
 app.include_router(thumbnails_router)
+app.include_router(pipeline_router)
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ Momiji Clipper — Post-scheduling worker.
 
 APScheduler BackgroundScheduler runs in the same FastAPI process.
 Jobs are persisted in the DB (PostJob rows) so they survive restarts.
+Also manages daily cleanup of old PipelineEvent records.
 """
 
 import asyncio
@@ -27,6 +28,14 @@ _scheduler = BackgroundScheduler(timezone=timezone.utc)
 def start_scheduler() -> None:
     if not _scheduler.running:
         _scheduler.start()
+        # Schedule daily cleanup of old PipelineEvent records (older than 7 days)
+        _scheduler.add_job(
+            _cleanup_old_pipeline_events,
+            "interval",
+            days=1,
+            id="cleanup_pipeline_events",
+            replace_existing=True,
+        )
         logger.info("APScheduler started.")
 
 
@@ -192,3 +201,24 @@ async def recover_scheduled_jobs() -> None:
                 job.status = "failed"
                 job.error_message = f"Scheduler recovery failed: {exc}"
                 await session.commit()
+
+
+def _cleanup_old_pipeline_events() -> None:
+    """Delete PipelineEvent records older than 7 days."""
+    try:
+        asyncio.run(_cleanup_old_pipeline_events_async())
+    except Exception as exc:
+        logger.error("Pipeline event cleanup failed: %s", exc)
+
+
+async def _cleanup_old_pipeline_events_async() -> None:
+    cutoff = time.time() - 7 * 86400  # 7 days ago
+    async with SessionContextManager() as session:
+        from sqlalchemy import delete
+        from db import PipelineEvent
+
+        result = await session.execute(
+            delete(PipelineEvent).where(PipelineEvent.created_at < cutoff)
+        )
+        if result.rowcount:
+            logger.info("Cleaned up %d old PipelineEvent records", result.rowcount)

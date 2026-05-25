@@ -1517,3 +1517,137 @@ export async function renderTimeline(
   })
   return consumeSSE<string>(res, onProgress, signal)
 }
+
+// ---------------------------------------------------------------------------
+// Pipeline Queue API
+// ---------------------------------------------------------------------------
+
+export interface PipelineJobApi {
+  id: string
+  project_id: string
+  owner_id: string
+  steps: string[]
+  current_step: number
+  status: 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
+  config: Record<string, unknown>
+  step_progress: number
+  step_label: string | null
+  error_message: string | null
+  failed_step: string | null
+  retry_count: number
+  priority: number
+  queued_at: number
+  started_at: number | null
+  completed_at: number | null
+  auto_advance: boolean
+  created_at: number
+}
+
+export interface PipelineEventApi {
+  id: string
+  event_type: string
+  step: string | null
+  progress: number | null
+  label: string | null
+  detail: string | null
+  created_at: number
+}
+
+export async function enqueuePipelineJob(params: {
+  project_id: string
+  steps?: string[]
+  config?: Record<string, unknown>
+}): Promise<{ job_id: string; status: string; steps: string[] }> {
+  const res = await fetch('/api/pipeline/enqueue', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function getPipelineJobs(filters?: {
+  status?: string
+  limit?: number
+  offset?: number
+}): Promise<{ jobs: PipelineJobApi[]; total: number; has_more: boolean }> {
+  const params = new URLSearchParams()
+  if (filters?.status) params.set('status', filters.status)
+  if (filters?.limit) params.set('limit', filters.limit.toString())
+  if (filters?.offset) params.set('offset', filters.offset.toString())
+  const res = await fetch(`/api/pipeline/jobs?${params}`, { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function getPipelineJob(jobId: string): Promise<PipelineJobApi> {
+  const res = await fetch(`/api/pipeline/jobs/${jobId}`, { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function getPipelineJobEvents(
+  jobId: string,
+  since: number,
+): Promise<{ events: PipelineEventApi[] }> {
+  const res = await fetch(`/api/pipeline/jobs/${jobId}/events?since=${since}`, { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export function pipelineJobStreamUrl(jobId: string): string {
+  return `/api/pipeline/jobs/${jobId}/stream`
+}
+
+export async function cancelPipelineJob(jobId: string): Promise<{ status: string }> {
+  const res = await fetch(`/api/pipeline/jobs/${jobId}/cancel`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function retryPipelineJob(
+  jobId: string,
+  config?: Record<string, unknown>,
+): Promise<{ job_id: string; status: string }> {
+  const res = await fetch(`/api/pipeline/jobs/${jobId}/retry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config ? { config } : {}),
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function pausePipelineJob(jobId: string): Promise<{ status: string; auto_advance: boolean }> {
+  const res = await fetch(`/api/pipeline/jobs/${jobId}/pause`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function resumePipelineJob(jobId: string): Promise<{ job_id: string; status: string }> {
+  const res = await fetch(`/api/pipeline/jobs/${jobId}/resume`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function getPipelineQueueStatus(): Promise<{
+  queued: number
+  running: number
+  per_user: Record<string, Record<string, number>>
+}> {
+  const res = await fetch('/api/pipeline/queue', { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
