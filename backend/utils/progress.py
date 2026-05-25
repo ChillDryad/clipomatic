@@ -76,17 +76,8 @@ class RedisProgressCallback:
                         )
                         session.add(event)
 
-            # Run the async DB write synchronously from the Celery worker
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # We're inside an async context already — schedule as task
-                    asyncio.ensure_future(_persist())
-                else:
-                    loop.run_until_complete(_persist())
-            except RuntimeError:
-                # No event loop — create one
-                asyncio.run(_persist())
+            # Celery worker has no running event loop — always use asyncio.run()
+            asyncio.run(_persist())
         except Exception as exc:
             logger.debug("Failed to write progress event to DB: %s", exc)
 

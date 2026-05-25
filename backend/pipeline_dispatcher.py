@@ -95,6 +95,7 @@ class PipelineDispatcher:
 
             # Try to dispatch jobs while capacity exists
             dispatched = set(j["job_id"] for j in self._active_jobs.values())
+            to_dispatch = []
             for job in queued_jobs:
                 if job.id in dispatched:
                     continue
@@ -111,8 +112,10 @@ class PipelineDispatcher:
                 if resource == "cpu" and cpu_running >= self._max_cpu:
                     continue
 
-                # Dispatch to Celery
-                await self._dispatch_job(job)
+                # Mark as running and track for dispatch
+                job.status = "running"
+                job.started_at = time.time()
+                to_dispatch.append((job.id, job.owner_id, resource))
                 dispatched.add(job.id)
                 user_active[job.owner_id] += 1
                 if resource == "gpu":
@@ -120,28 +123,38 @@ class PipelineDispatcher:
                 else:
                     cpu_running += 1
 
-    async def _dispatch_job(self, job: PipelineJob) -> None:
-        """Send a PipelineJob to Celery for execution."""
+            # Session commits here (on exit of async with) before we dispatch to Celery.
+            # This ensures the Celery task sees status='running' in the DB.
+
+        # Dispatch to Celery AFTER commit so tasks don't read stale data
+        for job_id, owner_id, resource in to_dispatch:
+            await self._dispatch_to_celery(job_id, owner_id, resource)
+
+    async def _dispatch_to_celery(self, job_id: str, owner_id: str, resource: str) -> None:
+        """Send a job to Celery for execution (DB already updated)."""
         from tasks import pipeline_chain
 
-        # Update job status
-        job.status = "running"
-        job.started_at = time.time()
+        result = pipeline_chain.delay(job_id)
 
-        # Dispatch to Celery
-        result = pipeline_chain.delay(job.id)
-        job.celery_task_id = result.id
+        # Store Celery task ID back to DB
+        async with get_session_cm() as session:
+            db_result = await session.execute(
+                select(PipelineJob).where(PipelineJob.id == job_id)
+            )
+            job = db_result.scalar_one_or_none()
+            if job:
+                job.celery_task_id = result.id
 
         # Track as active
-        self._active_jobs[job.id] = {
-            "job_id": job.id,
-            "owner_id": job.owner_id,
-            "resource": self._job_resource_type(job),
+        self._active_jobs[job_id] = {
+            "job_id": job_id,
+            "owner_id": owner_id,
+            "resource": resource,
             "celery_task_id": result.id,
             "started_at": time.time(),
         }
 
-        logger.info("Dispatched job %s (task %s) for user %s", job.id, result.id, job.owner_id)
+        logger.info("Dispatched job %s (task %s) for user %s", job_id, result.id, owner_id)
 
     async def _refresh_active(self, session) -> None:
         """Remove completed jobs from active tracking."""

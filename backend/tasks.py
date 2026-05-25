@@ -33,16 +33,16 @@ def pipeline_chain(self, job_id: str) -> None:
     """Run a chain of pipeline steps for a PipelineJob."""
     from sqlalchemy import select
 
-    # Load job and project from DB
-    job, project, config = _load_job(job_id)
-    if not job or not project:
+    # Load job data from DB (returns plain dicts, not ORM objects)
+    result = _load_job(job_id)
+    if result is None or result[1] is None:
         logger.error("PipelineJob %s or its project not found", job_id)
         return
 
-    steps = json.loads(job.steps)
-    progress_cb = RedisProgressCallback(job_id, "init")
+    steps_json, current_step, project_data, config = result
+    steps = json.loads(steps_json) if isinstance(steps_json, str) else steps_json
 
-    for step_idx in range(job.current_step, len(steps)):
+    for step_idx in range(current_step, len(steps)):
         step_name = steps[step_idx]
 
         # Update job state
@@ -50,7 +50,7 @@ def pipeline_chain(self, job_id: str) -> None:
 
         # Update project status
         status_map = _STEP_PROJECT_STATUS.get(step_name, {})
-        _update_project_status_sync(project.id, status_map.get("running", "processing"))
+        _update_project_status_sync(project_data["id"], status_map.get("running", "processing"))
 
         # Write step_start event
         _write_event_sync(job_id, "step_start", step=step_name)
@@ -60,16 +60,16 @@ def pipeline_chain(self, job_id: str) -> None:
 
         try:
             if step_name == "transcribe":
-                result = _run_transcribe(project, config, progress_cb)
+                step_result = _run_transcribe(project_data, config, progress_cb)
             elif step_name == "highlights":
-                result = _run_highlights(project, config, progress_cb)
+                step_result = _run_highlights(project_data, config, progress_cb)
             else:
                 raise ValueError(f"Unknown pipeline step: {step_name}")
 
             # Step succeeded
-            _write_event_sync(job_id, "step_done", step=step_name, detail=json.dumps(result) if isinstance(result, dict) else None)
+            _write_event_sync(job_id, "step_done", step=step_name)
             _update_job_step(job_id, step_name, step_idx, status="done", progress=1.0)
-            _update_project_status_sync(project.id, status_map.get("done", "completed"))
+            _update_project_status_sync(project_data["id"], status_map.get("done", "completed"))
 
             # Advance current_step
             _advance_job(job_id, step_idx + 1)
@@ -78,13 +78,16 @@ def pipeline_chain(self, job_id: str) -> None:
             logger.exception("Pipeline step %s failed for job %s: %s", step_name, job_id, exc)
             _write_event_sync(job_id, "error", step=step_name, detail=str(exc))
             _fail_job(job_id, step_name, str(exc))
-            _update_project_status_sync(project.id, status_map.get("failed", "failed"))
+            _update_project_status_sync(project_data["id"], status_map.get("failed", "failed"))
 
-            # Auto-retry for transient errors
-            retryable = isinstance(exc, (TimeoutError, ConnectionError, RuntimeError))
-            if retryable and job.retry_count < job.max_retries:
-                _increment_retry(job_id)
-                raise self.retry(exc=exc, countdown=30)
+            # Re-load job to check retry_count
+            job_data = _load_job(job_id)
+            if job_data:
+                # Auto-retry for transient errors
+                retryable = isinstance(exc, (TimeoutError, ConnectionError, RuntimeError))
+                if retryable:
+                    _increment_retry(job_id)
+                    raise self.retry(exc=exc, countdown=30)
 
             return
         finally:
@@ -96,7 +99,10 @@ def pipeline_chain(self, job_id: str) -> None:
 
 
 def _load_job(job_id: str):
-    """Load PipelineJob, VideoProject, and config from DB."""
+    """Load PipelineJob, VideoProject, and config from DB.
+
+    Returns plain dicts to avoid DetachedInstanceError with closed sessions.
+    """
     import asyncio
     from sqlalchemy import select
 
@@ -115,25 +121,25 @@ def _load_job(job_id: str):
             project = result.scalar_one_or_none()
 
             config = json.loads(job.config) if job.config else {}
-            return job, project, config
 
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(lambda: asyncio.run(_inner())).result()
-        return loop.run_until_complete(_inner())
-    except RuntimeError:
-        return asyncio.run(_inner())
+            # Extract into plain dicts to survive session closure
+            project_data = {
+                "id": project.id,
+                "source_path": project.source_path,
+                "original_source": project.original_source,
+            }
+            return job.steps, job.current_step, project_data, config
+
+    return asyncio.run(_inner())
 
 
-def _run_transcribe(project: VideoProject, config: dict, progress_cb) -> dict:
+def _run_transcribe(project_data: dict, config: dict, progress_cb) -> dict:
     """Run the transcribe step."""
     from pipeline import transcription
 
-    video_path = project.source_path if os.path.exists(project.source_path) else None
-    audio_path = project.source_path if not video_path else None
+    source_path = project_data["source_path"]
+    video_path = source_path if os.path.exists(source_path) else None
+    audio_path = source_path if not video_path else None
 
     result = transcription.transcribe(
         video_path=video_path,
@@ -145,25 +151,29 @@ def _run_transcribe(project: VideoProject, config: dict, progress_cb) -> dict:
         audio_path=audio_path,
     )
 
-    # Persist transcript to DB (same logic as transcribe router's on_complete)
-    _persist_transcript_sync(project.id, project.source_path, result)
+    # Persist transcript to DB
+    _persist_transcript_sync(project_data["id"], source_path, result)
 
     return result
 
 
-def _run_highlights(project: VideoProject, config: dict, progress_cb) -> list:
+def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
     """Run the highlights detection step."""
     from pipeline import highlight_detection
     from utils.helpers import _clips_cache_path
 
-    # Load transcript
-    stem = os.path.splitext(os.path.basename(project.source_path))[0]
-    transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
-    if not os.path.exists(transcript_path):
-        raise FileNotFoundError(f"Transcript not found at {transcript_path}")
+    source_path = project_data["source_path"]
+    project_id = project_data["id"]
 
-    with open(transcript_path, "r", encoding="utf-8") as f:
-        transcript_data = json.load(f)
+    # Load transcript from DB first, fall back to file
+    transcript_data = _load_transcript_from_db(project_id)
+    if not transcript_data:
+        stem = os.path.splitext(os.path.basename(source_path))[0]
+        transcript_path = os.path.join(WORKSPACE, f"{stem}_transcript.json")
+        if not os.path.exists(transcript_path):
+            raise FileNotFoundError(f"Transcript not found at {transcript_path}")
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            transcript_data = json.load(f)
 
     api_key = os.environ.get("LLM_API_KEY", "")
     base_url = os.environ.get("LLM_BASE_URL", "")
@@ -184,14 +194,37 @@ def _run_highlights(project: VideoProject, config: dict, progress_cb) -> list:
     )
 
     # Write to cache file
-    cache_path = _clips_cache_path(project.source_path)
+    cache_path = _clips_cache_path(source_path)
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(detected_clips, f, ensure_ascii=False, indent=2)
 
-    # Persist clips to DB (same logic as highlights router)
-    _persist_clips_sync(project.id, detected_clips)
+    # Persist clips to DB
+    _persist_clips_sync(project_id, detected_clips)
 
     return detected_clips
+
+
+def _load_transcript_from_db(project_id: str) -> dict | None:
+    """Load transcript data from the DB. Returns None if not found."""
+    import asyncio
+    from sqlalchemy import select
+
+    async def _inner():
+        async with get_session_cm() as session:
+            result = await session.execute(
+                select(Transcript).where(Transcript.project_id == project_id)
+            )
+            record = result.scalar_one_or_none()
+            if not record:
+                return None
+            return {
+                "language": record.language,
+                "language_probability": record.language_probability,
+                "duration": record.duration,
+                "segments": json.loads(record.segments) if isinstance(record.segments, str) else record.segments,
+            }
+
+    return asyncio.run(_inner())
 
 
 def _persist_transcript_sync(project_id: str, source_path: str, result: dict) -> None:
@@ -390,19 +423,11 @@ def _write_event_sync(job_id: str, event_type: str, step: str = None, progress: 
 
 
 def _run_async(coro_func):
-    """Helper to run an async function from synchronous Celery worker context."""
+    """Helper to run an async function from synchronous Celery worker context.
+
+    Celery workers are synchronous — no running event loop exists.
+    We always use asyncio.run() which creates a fresh loop each time.
+    """
     import asyncio
 
-    async def _wrapper():
-        await coro_func()
-
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                pool.submit(lambda: asyncio.run(_wrapper())).result()
-        else:
-            loop.run_until_complete(_wrapper())
-    except RuntimeError:
-        asyncio.run(_wrapper())
+    asyncio.run(coro_func())

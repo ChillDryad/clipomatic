@@ -22,3 +22,6 @@ celery_app.conf.update(
     task_track_started=True,
     worker_prefetch_multiplier=1,
 )
+
+# Import tasks so Celery worker discovers them
+import tasks  # noqa: E402, F401
