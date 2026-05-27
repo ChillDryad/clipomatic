@@ -8,7 +8,15 @@ This keeps the job atomic and makes round-robin dispatch simpler.
 import json
 import logging
 import os
+import sys
 import time
+
+# Ensure the backend directory is on sys.path so that
+# `from pipeline import ...` and `from db import ...` work
+# regardless of how Celery is invoked.
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
 
 from celery_app import celery_app
 from db import PipelineJob, PipelineEvent, VideoProject, Transcript, GeneratedClip, get_session_cm

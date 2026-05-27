@@ -6,6 +6,13 @@ Broker DB 0, Result backend DB 1 (to avoid key collisions).
 """
 
 import os
+import sys
+
+# Ensure the backend directory is on sys.path before any imports
+# so that `from pipeline import ...` and `from db import ...` work.
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
 
 from celery import Celery
 
