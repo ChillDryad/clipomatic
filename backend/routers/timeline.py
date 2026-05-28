@@ -112,6 +112,9 @@ class RenderClipRequest(BaseModel):
     thumbnail_path: str | None = None
     zoom_effect: dict | None = None  # {"start_scale": 1.5, "end_scale": 1.0, "zoom_duration": 1.0, "easing": "ease_out"}
     sfx_placements: list[dict] | None = None  # [{"sfx_name": "whoosh.wav", "time": 0.0, "volume": 0.7}]
+    remove_silence: bool = False
+    min_silence_duration: float = 1.0
+    audio_energy: list[dict] | None = None
 
 
 class RenderSegmentRequest(BaseModel):
@@ -140,6 +143,7 @@ class RenderTimelineRequest(BaseModel):
 async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_current_user)):
     """Render a clip to 9:16 vertical MP4 with subtitles. SSE: single done event."""
     from pipeline.renderer import render_clip, CropBox, ZoomEffect
+    from pipeline.silence_removal import detect_keep_segments
 
     renders_dir = os.path.join(WORKSPACE, "renders")
     os.makedirs(renders_dir, exist_ok=True)
@@ -165,6 +169,21 @@ async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_
                 zoom_effect=zoom,
             )
             sfx = [{"sfx_name": sp.sfx_name, "time": sp.time, "volume": sp.volume} for sp in sfx_dicts]
+
+    # Silence removal: compute keep segments when requested
+    keep_segments = None
+    if req.remove_silence:
+        clip_start = float(req.clip.get("start", 0))
+        clip_end = float(req.clip.get("end", 0))
+        result = detect_keep_segments(
+            transcript={"segments": req.segments},
+            audio_energy=req.audio_energy,
+            clip_start=clip_start,
+            clip_end=clip_end,
+            min_silence=req.min_silence_duration,
+        )
+        if len(result.keep_segments) > 1:
+            keep_segments = result.keep_segments
 
     async def generate():
         yield _sse_event({"progress": 0.1, "label": "Running FFmpeg…"})
@@ -198,6 +217,7 @@ async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_
                 zoom_effect=zoom,
                 sfx_placements=sfx,
                 workspace_dir=WORKSPACE,
+                keep_segments=keep_segments,
             )
             rel = os.path.relpath(out_path, WORKSPACE)
             yield _sse_event({"done": True, "result": f"/workspace/{rel}"})

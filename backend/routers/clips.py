@@ -7,6 +7,7 @@ Endpoints:
 - POST /api/clips/{clip_key}/regenerate-metadata — Regenerate clip metadata
 - POST /api/clips/{clip_key}/generate-post-description — Generate post description
 - POST /api/clips/{clip_key}/suggest-sfx — Suggest SFX placements for a clip
+- POST /api/clips/{clip_key}/detect-silence — Detect silent gaps in a clip
 """
 
 import os
@@ -52,6 +53,13 @@ class SuggestSfxRequest(BaseModel):
     clip: dict
     audio_energy: list[dict] | None = None
     zoom_effect: dict | None = None
+
+
+class DetectSilenceRequest(BaseModel):
+    clip: dict
+    segments: list[dict]
+    audio_energy: list[dict] | None = None
+    min_silence_duration: float = 1.0
 
 
 @router.patch("/{clip_key}")
@@ -176,4 +184,28 @@ async def suggest_sfx_endpoint(clip_key: str, req: SuggestSfxRequest, user: User
              "fade_in": sp.fade_in, "fade_out": sp.fade_out}
             for sp in placements
         ],
+    }
+
+
+@router.post("/{clip_key}/detect-silence")
+async def detect_silence_endpoint(clip_key: str, req: DetectSilenceRequest, user: User = Depends(get_current_user)):
+    """Detect silent gaps in a clip and return the segments that would be kept after removal."""
+    from pipeline.silence_removal import detect_keep_segments
+
+    clip_start = float(req.clip.get("start", 0))
+    clip_end = float(req.clip.get("end", 0))
+
+    result = detect_keep_segments(
+        transcript={"segments": req.segments},
+        audio_energy=req.audio_energy,
+        clip_start=clip_start,
+        clip_end=clip_end,
+        min_silence=req.min_silence_duration,
+    )
+
+    return {
+        "keep_segments": [{"start": seg.start, "end": seg.end} for seg in result.keep_segments],
+        "removed_silences": [{"start": s, "end": e} for s, e in result.removed_silences],
+        "original_duration": result.original_duration,
+        "output_duration": result.output_duration,
     }

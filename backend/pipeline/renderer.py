@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 
 from pipeline.media import extract_frame, get_video_dimensions  # noqa: F401 — re-exported for api.py
+from pipeline.silence_removal import KeepSegment, remap_time, remap_segments  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -606,6 +607,7 @@ def render_clip(
     zoom_effect: ZoomEffect | None = None,
     sfx_placements: list | None = None,
     workspace_dir: str | None = None,
+    keep_segments: list[KeepSegment] | None = None,
 ) -> str:
     """
     Render a single clip to a 9:16 vertical MP4 with per-word karaoke subtitles.
@@ -676,6 +678,19 @@ def render_clip(
     if layout_mode == "gameplay_only" and not crop_game:
         raise ValueError("layout_mode='gameplay_only' requires crop_game")
 
+    # Determine effective duration (may be shorter after silence removal)
+    use_silence_removal = keep_segments is not None and len(keep_segments) > 1
+    if use_silence_removal:
+        output_duration = sum(seg.end - seg.start for seg in keep_segments)
+        # Remap subtitle timestamps for silence-removed output
+        segments = remap_segments(segments, start, keep_segments)
+        effective_start = 0.0
+        effective_end = output_duration
+    else:
+        output_duration = duration
+        effective_start = start
+        effective_end = end
+
     # Validate crop dimensions before calling FFmpeg
     for label, crop in [("crop_avatar", crop_avatar), ("crop_game", crop_game)]:
         if crop is not None and (
@@ -689,8 +704,8 @@ def render_clip(
     # ---- Build ASS subtitle file (per-word karaoke, CapCut style) ----
     ass_content = _build_ass_word_by_word(
         segments=segments,
-        clip_start=start,
-        clip_end=end,
+        clip_start=effective_start,
+        clip_end=effective_end,
         font_name=font_name,
         font_color=font_color,
         highlight_color=highlight_color,
@@ -720,70 +735,86 @@ def render_clip(
 
 
         # ---- Build FFmpeg filtergraph ----
+        filter_parts: list[str] = []
+
+        # Silence removal: split video into keep segments, trim each, concat
+        if use_silence_removal:
+            n = len(keep_segments)
+            v_splits = ",".join(f"[vseg{i}]" for i in range(n))
+            filter_parts.append(f"[0:v]split={n}{v_splits}")
+            for i, seg in enumerate(keep_segments):
+                filter_parts.append(
+                    f"[vseg{i}]setpts=PTS-STARTPTS,trim=start={seg.start}:end={seg.end},setpts=PTS-STARTPTS[vtrim{i}]"
+                )
+            v_trims = "".join(f"[vtrim{i}]" for i in range(n))
+            filter_parts.append(f"{v_trims}concat=n={n}:v=1:a=0[concat_v]")
+            video_input = "[concat_v]"
+        else:
+            video_input = "[0:v]"
+
+        # Layout processing on the (possibly concatenated) video
         if layout_mode == "stacked":
-            split = "[0:v]split=2[v1][v2]"
+            split = f"{video_input}split=2[v1][v2]"
             avatar_crop = _build_crop_filter(
-                "[v1]", "[avatar]", crop_avatar, start, end, output_width, half_h
+                "[v1]", "[avatar]", crop_avatar, effective_start, effective_end, output_width, half_h
             )
             game_crop = _build_crop_filter(
-                "[v2]", "[game]", crop_game, start, end, output_width, half_h
+                "[v2]", "[game]", crop_game, effective_start, effective_end, output_width, half_h
             )
             stack = "[game][avatar]vstack=inputs=2[stacked]"
-            # Insert zoom before subtitles if zoom_effect is set
+            filter_parts.extend([split, avatar_crop, game_crop, stack])
+            video_label = "[stacked]"
             if zoom_effect:
-                zoom_frames = int(duration * 30)
+                zoom_frames = int(output_duration * 30)
                 zoom_expr = _build_zoom_expression(zoom_effect)
                 zoom_filter = (
-                    f"[stacked]zoompan=z='{zoom_expr}'"
+                    f"{video_label}zoompan=z='{zoom_expr}'"
                     f":x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'"
                     f":d={zoom_frames}:s={output_width}x{output_height}:fps=30"
                     f",setsar=1[zoomed]"
                 )
-                subtitle_filter = f"[zoomed]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-                filtergraph = "; ".join(
-                    [split, avatar_crop, game_crop, stack, zoom_filter, subtitle_filter]
-                )
-            else:
-                subtitle_filter = f"[stacked]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-                filtergraph = "; ".join(
-                    [split, avatar_crop, game_crop, stack, subtitle_filter]
-                )
+                filter_parts.append(zoom_filter)
+                video_label = "[zoomed]"
+            sub_filter = f"{video_label}subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+            filter_parts.append(sub_filter)
         elif layout_mode == "camera_only":
             cam_crop = _build_crop_filter(
-                "[0:v]", "[cam]", crop_avatar, start, end, output_width, output_height
+                video_input, "[cam]", crop_avatar, effective_start, effective_end, output_width, output_height
             )
+            filter_parts.append(cam_crop)
+            video_label = "[cam]"
             if zoom_effect:
-                zoom_frames = int(duration * 30)
+                zoom_frames = int(output_duration * 30)
                 zoom_expr = _build_zoom_expression(zoom_effect)
                 zoom_filter = (
-                    f"[cam]zoompan=z='{zoom_expr}'"
+                    f"{video_label}zoompan=z='{zoom_expr}'"
                     f":x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'"
                     f":d={zoom_frames}:s={output_width}x{output_height}:fps=30"
                     f",setsar=1[zoomed]"
                 )
-                sub_f = f"[zoomed]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-                filtergraph = "; ".join([cam_crop, zoom_filter, sub_f])
-            else:
-                sub_f = f"[cam]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-                filtergraph = "; ".join([cam_crop, sub_f])
+                filter_parts.append(zoom_filter)
+                video_label = "[zoomed]"
+            sub_filter = f"{video_label}subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+            filter_parts.append(sub_filter)
         elif layout_mode == "gameplay_only":
             game_crop = _build_crop_filter(
-                "[0:v]", "[game]", crop_game, start, end, output_width, output_height
+                video_input, "[game]", crop_game, effective_start, effective_end, output_width, output_height
             )
+            filter_parts.append(game_crop)
+            video_label = "[game]"
             if zoom_effect:
-                zoom_frames = int(duration * 30)
+                zoom_frames = int(output_duration * 30)
                 zoom_expr = _build_zoom_expression(zoom_effect)
                 zoom_filter = (
-                    f"[game]zoompan=z='{zoom_expr}'"
+                    f"{video_label}zoompan=z='{zoom_expr}'"
                     f":x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'"
                     f":d={zoom_frames}:s={output_width}x{output_height}:fps=30"
                     f",setsar=1[zoomed]"
                 )
-                sub_f = f"[zoomed]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-                filtergraph = "; ".join([game_crop, zoom_filter, sub_f])
-            else:
-                sub_f = f"[game]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-                filtergraph = "; ".join([game_crop, sub_f])
+                filter_parts.append(zoom_filter)
+                video_label = "[zoomed]"
+            sub_filter = f"{video_label}subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+            filter_parts.append(sub_filter)
         else:
             raise ValueError(f"Unknown layout_mode: {layout_mode}")
 
@@ -791,7 +822,7 @@ def render_clip(
         extra_inputs = []
         map_video = "[out]"
         if thumbnail_path and os.path.exists(thumbnail_path):
-            main_duration = max(1.0, duration - thumbnail_duration)
+            main_duration = max(1.0, output_duration - thumbnail_duration)
             thumb_frames = int(thumbnail_duration * 30)
 
             trim_main = f"[out]trim=end={main_duration},setpts=PTS-STARTPTS[main_v]"
@@ -802,7 +833,7 @@ def render_clip(
                 f",loop=loop={thumb_frames}:size=1,setpts=PTS-STARTPTS[thumb_v]"
             )
             concat = "[main_v][thumb_v]concat=n=2:v=1:a=0[final_v]"
-            filtergraph = "; ".join([filtergraph, trim_main, thumb_still, concat])
+            filter_parts.extend([trim_main, thumb_still, concat])
             map_video = "[final_v]"
             extra_inputs = ["-i", thumbnail_path]
 
@@ -834,11 +865,24 @@ def render_clip(
         sfx_extra_inputs: list[str] = []
         sfx_audio_filters: list[str] = []
         audio_output_label = "[aout]"
+        audio_parts: list[str] = []
 
         if has_audio:
-            audio_base_filter = (
-                f"[0:a]asetpts=PTS-STARTPTS,atrim=start={start}:end={end},asetpts=PTS-STARTPTS[audio_base]"
-            )
+            if use_silence_removal:
+                # Multi-segment audio: split, atrim each keep segment, concat
+                n = len(keep_segments)
+                a_splits = ",".join(f"[aseg{i}]" for i in range(n))
+                audio_parts.append(f"[0:a]asplit={n}{a_splits}")
+                for i, seg in enumerate(keep_segments):
+                    audio_parts.append(
+                        f"[aseg{i}]asetpts=PTS-STARTPTS,atrim=start={seg.start}:end={seg.end},asetpts=PTS-STARTPTS[atrim{i}]"
+                    )
+                a_trims = "".join(f"[atrim{i}]" for i in range(n))
+                audio_parts.append(f"{a_trims}concat=n={n}:v=0:a=1[audio_base]")
+            else:
+                audio_parts.append(
+                    f"[0:a]asetpts=PTS-STARTPTS,atrim=start={start}:end={end},asetpts=PTS-STARTPTS[audio_base]"
+                )
 
             # Mix SFX if placements are provided
             if sfx_placements and workspace_dir:
@@ -850,6 +894,11 @@ def render_clip(
                         placements.append(SfxPlacement(**sp))
                     else:
                         placements.append(sp)
+
+                # Remap SFX times when silence removal is active
+                if use_silence_removal:
+                    for p in placements:
+                        p.time = remap_time(p.time, keep_segments, start)
 
                 # SFX inputs start after the video input (index 0) and any thumbnail input (index 1)
                 next_idx = 2 if (thumbnail_path and os.path.exists(thumbnail_path)) else 1
@@ -863,18 +912,15 @@ def render_clip(
                 if sfx_inputs:
                     sfx_extra_inputs = sfx_inputs
                     sfx_audio_filters = sfx_filters
-                    audio_filter = "; ".join([audio_base_filter] + sfx_audio_filters)
+                    audio_parts.extend(sfx_audio_filters)
                 else:
                     # SFX mixing failed (no valid files), just use base audio
-                    audio_filter = (
-                        f"[0:a]asetpts=PTS-STARTPTS,atrim=start={start}:end={end},asetpts=PTS-STARTPTS{audio_output_label}"
-                    )
+                    audio_parts.append(f"[audio_base]anull{audio_output_label}")
             else:
-                audio_filter = (
-                    f"[0:a]asetpts=PTS-STARTPTS,atrim=start={start}:end={end},asetpts=PTS-STARTPTS{audio_output_label}"
-                )
-        else:
-            audio_filter = ""
+                audio_parts.append(f"[audio_base]anull{audio_output_label}")
+
+        filtergraph = "; ".join(filter_parts)
+        audio_filter = "; ".join(audio_parts) if audio_parts else ""
 
         # ---- Output path ----
         safe_title = re.sub(r"[^\w\- ]", "", clip.get("title", "clip"))[:40].strip()
