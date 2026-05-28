@@ -310,6 +310,124 @@ def generate_waveform(
             os.remove(temp_path)
 
 
+def analyze_audio_energy(
+    audio_path: str,
+    segment_duration: float = 1.0,
+    silence_threshold: float = 0.02,
+    spike_threshold: float = 2.0,
+    spike_window: float = 5.0,
+) -> list[dict]:
+    """Analyze audio energy per time segment for hook detection.
+
+    Extracts per-second audio features (peak amplitude, RMS energy,
+    silence ratio) and flags volume spikes that indicate emotional peaks.
+
+    Reuses the same ffmpeg PCM extraction pattern as generate_waveform().
+
+    Args:
+        audio_path: Path to audio file (any ffmpeg-supported format).
+        segment_duration: Seconds per analysis window (default 1.0).
+        silence_threshold: Amplitude below which a sample is considered silent
+            (default 0.02).
+        spike_threshold: Multiplier of rolling mean peak for spike detection
+            (default 2.0).
+        spike_window: Rolling window in seconds for spike baseline (default 5.0).
+
+    Returns:
+        List of segment dicts:
+        [
+            {
+                "start": 0.0,
+                "end": 1.0,
+                "peak": 0.72,
+                "rms": 0.31,
+                "silence_ratio": 0.05,
+                "is_spike": True,
+            },
+            ...
+        ]
+    """
+    if not os.path.exists(audio_path):
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    info = _get_audio_info(audio_path)
+    duration = info["duration"]
+    sample_rate = info["sample_rate"]
+
+    # Extract to mono f32le PCM at 16kHz (fast, sufficient for energy analysis)
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".f32")
+    try:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", audio_path,
+            "-acodec", "pcm_f32le",
+            "-ar", "16000",
+            "-ac", "1",
+            "-f", "f32le",
+            temp_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"FFmpeg extraction failed: {result.stderr.strip()}")
+
+        with open(temp_path, "rb") as f:
+            raw_data = f.read()
+
+        import struct
+        import math
+
+        samples_per_segment = int(16000 * segment_duration)
+        total_samples = len(raw_data) // 4
+
+        if total_samples == 0:
+            return []
+
+        segments: list[dict] = []
+        for seg_idx in range(0, total_samples, samples_per_segment):
+            chunk_bytes = raw_data[seg_idx * 4 : (seg_idx + samples_per_segment) * 4]
+            if len(chunk_bytes) < 4:
+                break
+
+            samples = struct.unpack(f"{len(chunk_bytes) // 4}f", chunk_bytes)
+            if not samples:
+                continue
+
+            peak = max(abs(s) for s in samples)
+            sum_squares = sum(s * s for s in samples)
+            rms = math.sqrt(sum_squares / len(samples))
+            silent_count = sum(1 for s in samples if abs(s) < silence_threshold)
+            silence_ratio = silent_count / len(samples)
+
+            seg_start = (seg_idx / 16000)
+            seg_end = seg_start + segment_duration
+
+            segments.append({
+                "start": round(seg_start, 3),
+                "end": round(min(seg_end, duration), 3),
+                "peak": round(peak, 4),
+                "rms": round(rms, 4),
+                "silence_ratio": round(silence_ratio, 4),
+                "is_spike": False,  # set in second pass
+            })
+
+        # Second pass: flag spikes where peak > spike_threshold * rolling_mean
+        window_segments = int(spike_window / segment_duration)
+        for i, seg in enumerate(segments):
+            lo = max(0, i - window_segments)
+            hi = min(len(segments), i + window_segments + 1)
+            window_peaks = [segments[j]["peak"] for j in range(lo, hi)]
+            if window_peaks:
+                rolling_mean = sum(window_peaks) / len(window_peaks)
+                if rolling_mean > 0 and seg["peak"] > spike_threshold * rolling_mean:
+                    seg["is_spike"] = True
+
+        return segments
+
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 def _generate_waveform_image(peaks: list[float], output_path: str, width: int = 1000, height: int = 200):
     """Generate a PNG waveform image from peak data."""
     try:

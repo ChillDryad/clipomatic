@@ -80,6 +80,15 @@ Target clip length: 9–90 seconds. Pick start and end timestamps that create cl
 
 Output ONLY the JSON array. No markdown, no explanations, no code fences."""
 
+_AUDIO_ENERGY_SYSTEM_APPEND = """
+
+## AUDIO ENERGY ANNOTATIONS
+The transcript includes audio energy annotations marked as:
+- SPIKE: Sudden volume increase — potential emotional peak or hook moment
+- SILENCE: Quiet pause — often precedes important moments or punchlines
+- RAPID_SPEECH: Speaking rate above average — may indicate excitement or urgency
+Use these annotations to better score the Hook and Emotional Peak criteria. A SPIKE near the start of a clip strongly suggests a good hook. A SILENCE followed by a SPIKE is a classic setup-payoff pattern."""
+
 # Token limit for transcript chunk — increased for Gemma4's larger context
 # ~24k tokens ≈ 96k chars (Gemma4 can handle more than llama3)
 _MAX_CHUNK_CHARS = 96_000
@@ -343,6 +352,112 @@ def _chat(client, model: str, system: str, messages: list[dict], temperature: fl
     return resp.choices[0].message.content or ""
 
 
+def compute_word_density(
+    transcript: dict, window: float = 1.0
+) -> list[dict]:
+    """Compute words-per-second per time window from transcript word timestamps.
+
+    Args:
+        transcript: Transcript dict with segments containing word-level timestamps.
+        window: Window duration in seconds (default 1.0).
+
+    Returns:
+        List of dicts with start, end, word_count, is_rapid.
+    """
+    if not transcript.get("segments"):
+        return []
+
+    # Collect all word timestamps
+    word_times: list[float] = []
+    for seg in transcript["segments"]:
+        for w in seg.get("words", []):
+            if "start" in w:
+                word_times.append(w["start"])
+
+    if not word_times:
+        return []
+
+    duration = transcript.get("duration", word_times[-1] + 1.0)
+    bins: list[dict] = []
+    idx = 0
+
+    t = 0.0
+    while t < duration:
+        end = t + window
+        count = 0
+        while idx < len(word_times) and word_times[idx] < end:
+            count += 1
+            idx += 1
+        bins.append({
+            "start": round(t, 3),
+            "end": round(end, 3),
+            "word_count": count,
+        })
+        t = end
+
+    # Reset idx and recount for mean
+    mean_count = sum(b["word_count"] for b in bins) / len(bins) if bins else 0
+    for b in bins:
+        b["is_rapid"] = b["word_count"] > 1.5 * mean_count if mean_count > 0 else False
+
+    return bins
+
+
+def _format_audio_annotations(
+    audio_energy: list[dict] | None = None,
+    word_density: list[dict] | None = None,
+) -> str:
+    """Format audio energy and word density data as LLM-readable annotations.
+
+    Only includes notable events (spikes, silence, rapid speech) to keep the
+    prompt concise. Returns an empty string if no notable events are found.
+    """
+    lines: list[str] = []
+    seen_times: set[float] = set()
+
+    if audio_energy:
+        for seg in audio_energy:
+            if seg.get("is_spike"):
+                t = seg["start"]
+                lines.append(
+                    f"[{_seconds_to_timestamp(t)}] SPIKE - sudden volume increase "
+                    f"(peak={seg['peak']:.2f})"
+                )
+                seen_times.add(t)
+            if seg.get("silence_ratio", 0) > 0.7 and not seg.get("is_spike"):
+                t = seg["start"]
+                if t not in seen_times:
+                    lines.append(
+                        f"[{_seconds_to_timestamp(t)}] SILENCE - "
+                        f"quiet pause ({seg['silence_ratio']:.0%} silent)"
+                    )
+                    seen_times.add(t)
+
+    if word_density:
+        for seg in word_density:
+            if seg.get("is_rapid"):
+                t = seg["start"]
+                if t not in seen_times:
+                    lines.append(
+                        f"[{_seconds_to_timestamp(t)}] RAPID_SPEECH - "
+                        f"{seg['word_count']} words/sec"
+                    )
+                    seen_times.add(t)
+
+    if not lines:
+        return ""
+
+    return "\n\n## AUDIO ENERGY (timestamp - label)\n" + "\n".join(lines)
+
+
+def _seconds_to_timestamp(seconds: float) -> str:
+    """Convert float seconds to H:MM:SS.ss timestamp matching transcript format."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
 def detect_highlights(
     transcript: dict,
     api_key: str,
@@ -351,6 +466,7 @@ def detect_highlights(
     progress_callback=None,
     timeout_per_chunk: float = 300.0,  # 5 minutes per LLM call (increased for larger models)
     fallback_model: str = _FALLBACK_MODEL,
+    audio_energy: list[dict] | None = None,
 ) -> list[dict]:
     """
     Single-turn approach optimized for Gemma4 with automatic fallback.
@@ -366,6 +482,7 @@ def detect_highlights(
         progress_callback: Progress callback
         timeout_per_chunk: Timeout per LLM call in seconds (default 300s)
         fallback_model: Fallback model name when primary fails (default "phi3:mini")
+        audio_energy: Optional per-second audio energy data from analyze_audio_energy()
     """
     from openai import OpenAI
     from openai import APIError, APITimeoutError
@@ -376,6 +493,11 @@ def detect_highlights(
 
     flat_text = transcript_to_text(transcript)
     chunks = _chunk_transcript(flat_text)
+
+    # Build audio energy annotations if available
+    word_density = compute_word_density(transcript) if audio_energy else None
+    audio_annotations = _format_audio_annotations(audio_energy, word_density)
+    system_prompt_suffix = _AUDIO_ENERGY_SYSTEM_APPEND if audio_annotations else ""
 
     # Target 6-12 clips per hour of stream (use ~9/hour as midpoint), minimum 8 total
     duration_hours = transcript.get("duration", 0) / 3600
@@ -396,7 +518,11 @@ def detect_highlights(
 
         # Build prompt with dynamic clip target
         system_prompt = SINGLE_TURN_SYSTEM.replace("3-5 moments", f"{per_chunk_target} moments")
+        if system_prompt_suffix:
+            system_prompt += system_prompt_suffix
         user_message = f"Transcript (part {i + 1} of {n_chunks}):\n\n{chunk}"
+        if audio_annotations:
+            user_message += audio_annotations
 
         # Try primary model first (Gemma4)
         _cb(base_progress, f"{chunk_label} — analyzing with {model}…")

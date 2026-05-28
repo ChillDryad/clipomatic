@@ -216,6 +216,16 @@ def transcribe(
             "segments": all_segments,
         }
 
+        # Run audio energy analysis on the extracted WAV while it still exists
+        try:
+            from pipeline.audio import analyze_audio_energy
+            _fire(progress_callback, 0.97, "Analyzing audio energy…")
+            audio_energy = analyze_audio_energy(_audio_to_transcribe)
+            result["audio_energy"] = audio_energy
+        except Exception as exc:
+            logger.warning(f"Audio energy analysis failed (non-fatal): {exc}")
+            result["audio_energy"] = []
+
     finally:
         # Only delete temp audio if we created it (not if the caller provided it)
         if _temp_audio and os.path.exists(_temp_audio):

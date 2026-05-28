@@ -138,6 +138,15 @@ async def init_db() -> None:
     except Exception:
         pass  # Column already exists
 
+    # Migration: add audio_energy column to transcripts
+    try:
+        async with _engine.begin() as conn:
+            await conn.exec_driver_sql(
+                "ALTER TABLE transcripts ADD COLUMN audio_energy TEXT"
+            )
+    except Exception:
+        pass  # Column already exists
+
 
 # ---------------------------------------------------------------------------
 # Models
@@ -479,6 +488,7 @@ class Transcript(Base):
     language_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
     segments: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array of segments with words
+    audio_energy: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of per-second audio energy data
     created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
     updated_at: Mapped[float] = mapped_column(Float, default=lambda: time.time(), onupdate=lambda: time.time())
 

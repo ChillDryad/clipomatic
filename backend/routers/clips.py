@@ -5,6 +5,8 @@ Endpoints:
 - GET /api/clips/{clip_key} — Get single clip
 - PATCH /api/clips/{clip_key} — Update clip metadata
 - POST /api/clips/{clip_key}/regenerate-metadata — Regenerate clip metadata
+- POST /api/clips/{clip_key}/generate-post-description — Generate post description
+- POST /api/clips/{clip_key}/suggest-sfx — Suggest SFX placements for a clip
 """
 
 import os
@@ -16,6 +18,11 @@ from db import User, get_session_cm
 from auth import get_current_user
 from utils.helpers import _clips_cache_path, _parse_clip_key, _regenerate_clip_metadata, _generate_post_description
 from pydantic import BaseModel
+
+WORKSPACE = os.environ.get(
+    "WORKSPACE_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "workspace"),
+)
 
 router = APIRouter(prefix="/api/clips", tags=["Clips"])
 
@@ -39,6 +46,12 @@ class RegenerateMetadataRequest(BaseModel):
 class GeneratePostDescriptionRequest(BaseModel):
     clip: dict
     transcript: dict
+
+
+class SuggestSfxRequest(BaseModel):
+    clip: dict
+    audio_energy: list[dict] | None = None
+    zoom_effect: dict | None = None
 
 
 @router.patch("/{clip_key}")
@@ -137,3 +150,30 @@ async def generate_post_description_endpoint(clip_key: str, req: GeneratePostDes
     post_body = await _generate_post_description(req.clip, req.transcript)
 
     return {"post_body": post_body}
+
+
+@router.post("/{clip_key}/suggest-sfx")
+async def suggest_sfx_endpoint(clip_key: str, req: SuggestSfxRequest, user: User = Depends(get_current_user)):
+    """Suggest SFX placements based on clip metadata, audio energy, and zoom settings."""
+    from pipeline.sfx import suggest_sfx_placements, list_available_sfx
+    from pipeline.renderer import ZoomEffect
+
+    available = list_available_sfx(WORKSPACE)
+    zoom = None
+    if req.zoom_effect:
+        zoom = ZoomEffect(**req.zoom_effect)
+
+    placements = suggest_sfx_placements(
+        clip=req.clip,
+        audio_energy=req.audio_energy,
+        zoom_effect=zoom,
+    )
+
+    return {
+        "available_sfx": available,
+        "suggestions": [
+            {"sfx_name": sp.sfx_name, "time": sp.time, "volume": sp.volume,
+             "fade_in": sp.fade_in, "fade_out": sp.fade_out}
+            for sp in placements
+        ],
+    }

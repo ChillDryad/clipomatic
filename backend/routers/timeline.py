@@ -110,6 +110,8 @@ class RenderClipRequest(BaseModel):
     animation_speed: str | None = None
     style_preset: str | None = None
     thumbnail_path: str | None = None
+    zoom_effect: dict | None = None  # {"start_scale": 1.5, "end_scale": 1.0, "zoom_duration": 1.0, "easing": "ease_out"}
+    sfx_placements: list[dict] | None = None  # [{"sfx_name": "whoosh.wav", "time": 0.0, "volume": 0.7}]
 
 
 class RenderSegmentRequest(BaseModel):
@@ -130,12 +132,14 @@ class RenderTimelineRequest(BaseModel):
     overlays: list[dict] | None = None
     audio_tracks: list[dict] | None = None
     markers: list[dict] | None = None
+    zoom_effect: dict | None = None  # {"start_scale": 1.5, "end_scale": 1.0, "zoom_duration": 1.0, "easing": "ease_out"}
+    sfx_placements: list[dict] | None = None  # [{"sfx_name": "whoosh.wav", "time": 0.0, "volume": 0.7}]
 
 
 @render_router.post("/clip")
 async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_current_user)):
     """Render a clip to 9:16 vertical MP4 with subtitles. SSE: single done event."""
-    from pipeline.renderer import render_clip, CropBox
+    from pipeline.renderer import render_clip, CropBox, ZoomEffect
 
     renders_dir = os.path.join(WORKSPACE, "renders")
     os.makedirs(renders_dir, exist_ok=True)
@@ -146,6 +150,21 @@ async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_
 
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail=f"Video file not found: {video_path}")
+
+    zoom = ZoomEffect(**req.zoom_effect) if req.zoom_effect else None
+
+    # Auto-suggest SFX when zoom is set but no SFX placements provided
+    sfx = req.sfx_placements
+    if sfx is None and zoom is not None:
+        from pipeline.sfx import suggest_sfx_placements, list_available_sfx
+        available = list_available_sfx(WORKSPACE)
+        if available:
+            sfx_dicts = suggest_sfx_placements(
+                clip=req.clip,
+                audio_energy=None,
+                zoom_effect=zoom,
+            )
+            sfx = [{"sfx_name": sp.sfx_name, "time": sp.time, "volume": sp.volume} for sp in sfx_dicts]
 
     async def generate():
         yield _sse_event({"progress": 0.1, "label": "Running FFmpeg…"})
@@ -176,6 +195,9 @@ async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_
                 animation_speed=req.animation_speed,
                 style_preset=req.style_preset,
                 thumbnail_path=req.thumbnail_path,
+                zoom_effect=zoom,
+                sfx_placements=sfx,
+                workspace_dir=WORKSPACE,
             )
             rel = os.path.relpath(out_path, WORKSPACE)
             yield _sse_event({"done": True, "result": f"/workspace/{rel}"})
@@ -198,7 +220,7 @@ async def render_segment_endpoint(req: RenderSegmentRequest, user: User = Depend
 @render_router.post("/timeline")
 async def render_timeline_endpoint(req: RenderTimelineRequest, user: User = Depends(get_current_user)):
     """Render full timeline with all tracks, overlays, and effects."""
-    from pipeline.renderer import render_timeline, CropBox
+    from pipeline.renderer import render_timeline, CropBox, ZoomEffect
 
     renders_dir = os.path.join(WORKSPACE, "renders")
     os.makedirs(renders_dir, exist_ok=True)
@@ -209,6 +231,8 @@ async def render_timeline_endpoint(req: RenderTimelineRequest, user: User = Depe
 
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail=f"Video file not found: {video_path}")
+
+    zoom = ZoomEffect(**req.zoom_effect) if req.zoom_effect else None
 
     async def generate():
         yield _sse_event({"progress": 0.1, "label": "Running FFmpeg…"})
@@ -225,6 +249,7 @@ async def render_timeline_endpoint(req: RenderTimelineRequest, user: User = Depe
                 audio_tracks=req.audio_tracks,
                 markers=req.markers,
                 output_dir=renders_dir,
+                zoom_effect=zoom,
             )
             rel = os.path.relpath(out_path, WORKSPACE)
             yield _sse_event({"done": True, "result": f"/workspace/{rel}"})
@@ -241,7 +266,7 @@ async def render_preview_endpoint(req: RenderClipRequest, user: User = Depends(g
 
     SSE: single done event. Cached: identical params return cached preview instantly.
     """
-    from pipeline.renderer import render_clip, CropBox
+    from pipeline.renderer import render_clip, CropBox, ZoomEffect
     import hashlib
     import json
     import shutil
@@ -269,6 +294,7 @@ async def render_preview_endpoint(req: RenderClipRequest, user: User = Depends(g
             "caption_style": req.caption_style,
             "words_per_line": req.words_per_line,
             "thumbnail_path": req.thumbnail_path,
+            "zoom_effect": req.zoom_effect,
         }, sort_keys=True, default=str).encode()
     ).hexdigest()[:16]
 
@@ -281,6 +307,8 @@ async def render_preview_endpoint(req: RenderClipRequest, user: User = Depends(g
             yield _sse_event({"progress": 1.0, "label": "Cached preview"})
             yield _sse_event({"done": True, "result": f"/workspace/{rel}"})
         return _sse_response(cached_gen())
+
+    zoom = ZoomEffect(**req.zoom_effect) if req.zoom_effect else None
 
     async def generate():
         yield _sse_event({"progress": 0.1, "label": "Generating preview…"})
@@ -312,6 +340,7 @@ async def render_preview_endpoint(req: RenderClipRequest, user: User = Depends(g
                 output_width=540,
                 output_height=960,
                 thumbnail_path=req.thumbnail_path,
+                zoom_effect=zoom,
             )
             # Rename to cache key for next cache hit
             cached = os.path.join(preview_dir, f"preview_{cache_key}.mp4")

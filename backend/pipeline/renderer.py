@@ -23,6 +23,21 @@ class CropBox:
     h: int
 
 
+@dataclass
+class ZoomEffect:
+    """Configure a zoom effect for the start of a clip.
+
+    start_scale: Initial zoom factor (1.0 = no zoom, 1.5 = 50% zoomed in)
+    end_scale: Final zoom factor at zoom_duration (1.0 = normal framing)
+    zoom_duration: How many seconds the zoom transition takes
+    easing: Easing function — "ease_out" (starts fast, decelerates) or "linear"
+    """
+    start_scale: float = 1.5
+    end_scale: float = 1.0
+    zoom_duration: float = 1.0
+    easing: str = "ease_out"
+
+
 _NVENC_AVAILABLE: bool | None = None
 
 
@@ -38,6 +53,41 @@ def _nvenc_available() -> bool:
     )
     _NVENC_AVAILABLE = "h264_nvenc" in result.stdout
     return _NVENC_AVAILABLE
+
+
+def _build_zoom_expression(zoom: ZoomEffect, fps: int = 30) -> str:
+    """Build FFmpeg zoompan z= expression for a zoom effect.
+
+    The zoompan filter generates frames with per-frame zoom values.
+    On frames 0 through zoom_frames, zoom transitions from start_scale to end_scale.
+    After that, zoom stays at end_scale.
+
+    Escaping: inside the zoompan filter value, colons separate parameters.
+    The z expression is enclosed in single quotes in the filtergraph, so
+    we escape single quotes and commas that appear inside the expression.
+    """
+    zoom_frames = int(zoom.zoom_duration * fps)
+    if zoom_frames <= 0:
+        return f"{zoom.end_scale}"
+
+    s = zoom.start_scale
+    e = zoom.end_scale
+
+    if zoom.easing == "ease_out":
+        # Ease-out: starts fast (zoomed in), decelerates to end_scale
+        # z(on) = S - (S-E) * (1 - (1 - on/ZF)^2)
+        return (
+            f"if(lte(on\\,{zoom_frames})"
+            f"\\,{s}-({s}-{e})*(1-(1-on/{zoom_frames})^2)"
+            f"\\,{e})"
+        )
+    else:
+        # Linear interpolation
+        return (
+            f"if(lte(on\\,{zoom_frames})"
+            f"\\,{s}+({e}-{s})*on/{zoom_frames}"
+            f"\\,{e})"
+        )
 
 
 _QUALITY_SETTINGS: dict[str, dict] = {
@@ -553,6 +603,9 @@ def render_clip(
     style_preset: str | None = None,
     thumbnail_path: str | None = None,
     thumbnail_duration: float = 5.0,
+    zoom_effect: ZoomEffect | None = None,
+    sfx_placements: list | None = None,
+    workspace_dir: str | None = None,
 ) -> str:
     """
     Render a single clip to a 9:16 vertical MP4 with per-word karaoke subtitles.
@@ -676,22 +729,61 @@ def render_clip(
                 "[v2]", "[game]", crop_game, start, end, output_width, half_h
             )
             stack = "[game][avatar]vstack=inputs=2[stacked]"
-            subtitle_filter = f"[stacked]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-            filtergraph = "; ".join(
-                [split, avatar_crop, game_crop, stack, subtitle_filter]
-            )
+            # Insert zoom before subtitles if zoom_effect is set
+            if zoom_effect:
+                zoom_frames = int(duration * 30)
+                zoom_expr = _build_zoom_expression(zoom_effect)
+                zoom_filter = (
+                    f"[stacked]zoompan=z='{zoom_expr}'"
+                    f":x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'"
+                    f":d={zoom_frames}:s={output_width}x{output_height}:fps=30"
+                    f",setsar=1[zoomed]"
+                )
+                subtitle_filter = f"[zoomed]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+                filtergraph = "; ".join(
+                    [split, avatar_crop, game_crop, stack, zoom_filter, subtitle_filter]
+                )
+            else:
+                subtitle_filter = f"[stacked]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+                filtergraph = "; ".join(
+                    [split, avatar_crop, game_crop, stack, subtitle_filter]
+                )
         elif layout_mode == "camera_only":
             cam_crop = _build_crop_filter(
                 "[0:v]", "[cam]", crop_avatar, start, end, output_width, output_height
             )
-            sub_f = f"[cam]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-            filtergraph = "; ".join([cam_crop, sub_f])
+            if zoom_effect:
+                zoom_frames = int(duration * 30)
+                zoom_expr = _build_zoom_expression(zoom_effect)
+                zoom_filter = (
+                    f"[cam]zoompan=z='{zoom_expr}'"
+                    f":x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'"
+                    f":d={zoom_frames}:s={output_width}x{output_height}:fps=30"
+                    f",setsar=1[zoomed]"
+                )
+                sub_f = f"[zoomed]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+                filtergraph = "; ".join([cam_crop, zoom_filter, sub_f])
+            else:
+                sub_f = f"[cam]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+                filtergraph = "; ".join([cam_crop, sub_f])
         elif layout_mode == "gameplay_only":
             game_crop = _build_crop_filter(
                 "[0:v]", "[game]", crop_game, start, end, output_width, output_height
             )
-            sub_f = f"[game]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
-            filtergraph = "; ".join([game_crop, sub_f])
+            if zoom_effect:
+                zoom_frames = int(duration * 30)
+                zoom_expr = _build_zoom_expression(zoom_effect)
+                zoom_filter = (
+                    f"[game]zoompan=z='{zoom_expr}'"
+                    f":x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'"
+                    f":d={zoom_frames}:s={output_width}x{output_height}:fps=30"
+                    f",setsar=1[zoomed]"
+                )
+                sub_f = f"[zoomed]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+                filtergraph = "; ".join([game_crop, zoom_filter, sub_f])
+            else:
+                sub_f = f"[game]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[out]"
+                filtergraph = "; ".join([game_crop, sub_f])
         else:
             raise ValueError(f"Unknown layout_mode: {layout_mode}")
 
@@ -739,10 +831,48 @@ def render_clip(
 
         # Audio: trim to clip window and reset timestamps
         # Normalize PTS before atrim so start_time offsets don't shift the window
+        sfx_extra_inputs: list[str] = []
+        sfx_audio_filters: list[str] = []
+        audio_output_label = "[aout]"
+
         if has_audio:
-            audio_filter = (
-                f"[0:a]asetpts=PTS-STARTPTS,atrim=start={start}:end={end},asetpts=PTS-STARTPTS[aout]"
+            audio_base_filter = (
+                f"[0:a]asetpts=PTS-STARTPTS,atrim=start={start}:end={end},asetpts=PTS-STARTPTS[audio_base]"
             )
+
+            # Mix SFX if placements are provided
+            if sfx_placements and workspace_dir:
+                from pipeline.sfx import build_sfx_filter_chain, SfxPlacement
+
+                placements = []
+                for sp in sfx_placements:
+                    if isinstance(sp, dict):
+                        placements.append(SfxPlacement(**sp))
+                    else:
+                        placements.append(sp)
+
+                # SFX inputs start after the video input (index 0) and any thumbnail input (index 1)
+                next_idx = 2 if (thumbnail_path and os.path.exists(thumbnail_path)) else 1
+                sfx_inputs, sfx_filters, _ = build_sfx_filter_chain(
+                    placements=placements,
+                    workspace_dir=workspace_dir,
+                    main_audio_label="[audio_base]",
+                    output_label=audio_output_label,
+                    next_input_index=next_idx,
+                )
+                if sfx_inputs:
+                    sfx_extra_inputs = sfx_inputs
+                    sfx_audio_filters = sfx_filters
+                    audio_filter = "; ".join([audio_base_filter] + sfx_audio_filters)
+                else:
+                    # SFX mixing failed (no valid files), just use base audio
+                    audio_filter = (
+                        f"[0:a]asetpts=PTS-STARTPTS,atrim=start={start}:end={end},asetpts=PTS-STARTPTS{audio_output_label}"
+                    )
+            else:
+                audio_filter = (
+                    f"[0:a]asetpts=PTS-STARTPTS,atrim=start={start}:end={end},asetpts=PTS-STARTPTS{audio_output_label}"
+                )
         else:
             audio_filter = ""
 
@@ -765,6 +895,7 @@ def render_clip(
             "-i",
             video_path,
             *extra_inputs,
+            *sfx_extra_inputs,
             "-filter_complex",
             (filtergraph + "; " + audio_filter) if has_audio else filtergraph,
             "-map",
@@ -891,6 +1022,7 @@ def render_timeline(
     quality_preset: str = "standard",
     layout_mode: str = "stacked",
     animation_speed: str = "normal",
+    zoom_effect: ZoomEffect | None = None,
 ) -> str:
     """
     Render full timeline with multi-track support.
@@ -964,7 +1096,20 @@ def render_timeline(
                 "[0:v]", "[cam]", crop_avatar, start, end, output_width, output_height
             )
             filter_parts.append(cam_crop)
-            subtitle_filter = f"[cam]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[subtitled]"
+            # Apply zoom between crop and subtitles so captions stay stable
+            video_label = "[cam]"
+            if zoom_effect:
+                zoom_frames = int(duration * 30)
+                zoom_expr = _build_zoom_expression(zoom_effect)
+                zoom_filter = (
+                    f"{video_label}zoompan=z='{zoom_expr}'"
+                    f":x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'"
+                    f":d={zoom_frames}:s={output_width}x{output_height}:fps=30"
+                    f",setsar=1[zoomed]"
+                )
+                filter_parts.append(zoom_filter)
+                video_label = "[zoomed]"
+            subtitle_filter = f"{video_label}subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[subtitled]"
             filter_parts.append(subtitle_filter)
             current_input = "[subtitled]"
         elif layout_mode == "gameplay_only":
@@ -975,8 +1120,20 @@ def render_timeline(
                 "[0:v]", "[game]", crop_game, start, end, output_width, output_height
             )
             filter_parts.append(game_crop)
-            subtitle_filter = f"[game]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[subtitled]"
-            filter_parts.append(subtitle_filter)
+            video_label = "[game]"
+            if zoom_effect:
+                zoom_frames = int(duration * 30)
+                zoom_expr = _build_zoom_expression(zoom_effect)
+                zoom_filter = (
+                    f"{video_label}zoompan=z='{zoom_expr}'"
+                    f":x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'"
+                    f":d={zoom_frames}:s={output_width}x{output_height}:fps=30"
+                    f",setsar=1[zoomed]"
+                )
+                filter_parts.append(zoom_filter)
+                video_label = "[zoomed]"
+            sub_f = f"{video_label}subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[subtitled]"
+            filter_parts.append(sub_f)
             current_input = "[subtitled]"
         else:
             if layout_mode != "stacked":
@@ -1011,8 +1168,22 @@ def render_timeline(
             stack = "[game][avatar]vstack=inputs=2[stacked]"
             filter_parts.append(stack)
 
+            # Apply zoom between stack and subtitles so captions stay stable
+            video_label = "[stacked]"
+            if zoom_effect:
+                zoom_frames = int(duration * 30)
+                zoom_expr = _build_zoom_expression(zoom_effect)
+                zoom_filter = (
+                    f"{video_label}zoompan=z='{zoom_expr}'"
+                    f":x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'"
+                    f":d={zoom_frames}:s={output_width}x{output_height}:fps=30"
+                    f",setsar=1[zoomed]"
+                )
+                filter_parts.append(zoom_filter)
+                video_label = "[zoomed]"
+
             # Apply subtitles
-            subtitle_filter = f"[stacked]subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[subtitled]"
+            subtitle_filter = f"{video_label}subtitles='{ass_escaped.replace(chr(39), chr(39) + chr(39))}':force_style='Outline={outline_width},Shadow={shadow_depth}'[subtitled]"
             filter_parts.append(subtitle_filter)
             current_input = "[subtitled]"
 
