@@ -81,7 +81,7 @@ def detect_keep_segments(
     audio_energy: list[dict] | None = None,
     clip_start: float = 0.0,
     clip_end: float = 0.0,
-    min_silence: float = 1.0,
+    min_silence: float = 0.5,
     min_output_duration: float = 3.0,
     padding: float = 0.15,
 ) -> SilenceRemovalResult:

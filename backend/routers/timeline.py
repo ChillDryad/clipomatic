@@ -113,7 +113,7 @@ class RenderClipRequest(BaseModel):
     zoom_effect: dict | None = None  # {"start_scale": 1.5, "end_scale": 1.0, "zoom_duration": 1.0, "easing": "ease_out"}
     sfx_placements: list[dict] | None = None  # [{"sfx_name": "whoosh.wav", "time": 0.0, "volume": 0.7}]
     remove_silence: bool = False
-    min_silence_duration: float = 1.0
+    min_silence_duration: float = 0.5
     audio_energy: list[dict] | None = None
 
 

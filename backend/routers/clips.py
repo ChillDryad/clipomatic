@@ -59,7 +59,7 @@ class DetectSilenceRequest(BaseModel):
     clip: dict
     segments: list[dict]
     audio_energy: list[dict] | None = None
-    min_silence_duration: float = 1.0
+    min_silence_duration: float = 0.5
 
 
 @router.patch("/{clip_key}")
