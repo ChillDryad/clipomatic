@@ -43,7 +43,7 @@ def pipeline_chain(self, job_id: str) -> None:
 
     # Load job data from DB (returns plain dicts, not ORM objects)
     result = _load_job(job_id)
-    if result is None or result[1] is None:
+    if result is None:
         logger.error("PipelineJob %s or its project not found", job_id)
         return
 
@@ -110,6 +110,7 @@ def _load_job(job_id: str):
     """Load PipelineJob, VideoProject, and config from DB.
 
     Returns plain dicts to avoid DetachedInstanceError with closed sessions.
+    Returns None if the job or its project cannot be found.
     """
     import asyncio
     from sqlalchemy import select
@@ -121,12 +122,16 @@ def _load_job(job_id: str):
             )
             job = result.scalar_one_or_none()
             if not job:
-                return None, None, None
+                logger.warning("PipelineJob %s not found in DB", job_id)
+                return None
 
             result = await session.execute(
                 select(VideoProject).where(VideoProject.id == job.project_id)
             )
             project = result.scalar_one_or_none()
+            if not project:
+                logger.warning("VideoProject %s for PipelineJob %s not found in DB", job.project_id, job_id)
+                return None
 
             config = json.loads(job.config) if job.config else {}
 

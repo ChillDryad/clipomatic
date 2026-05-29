@@ -15,6 +15,7 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 from celery import Celery
+from celery.signals import worker_process_init
 
 celery_app = Celery(
     "momiji",
@@ -29,6 +30,14 @@ celery_app.conf.update(
     task_track_started=True,
     worker_prefetch_multiplier=1,
 )
+
+
+@worker_process_init.connect
+def _ensure_path_in_worker(**kwargs):
+    """Re-ensure sys.path is correct in each forked worker process."""
+    if _BACKEND_DIR not in sys.path:
+        sys.path.insert(0, _BACKEND_DIR)
+
 
 # Import tasks so Celery worker discovers them
 import tasks  # noqa: E402, F401

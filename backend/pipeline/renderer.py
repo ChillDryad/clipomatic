@@ -663,11 +663,28 @@ def render_clip(
                     f"File: {video_path}"
                 )
             if video_duration < duration:
-                raise RuntimeError(
-                    f"Input video duration ({video_duration:.1f}s) is shorter than requested clip ({duration:.1f}s). "
-                    f"Requested clip: {start:.1f}s to {end:.1f}s. "
-                    f"This may indicate a failed segment download. File: {video_path}"
+                shortfall = duration - video_duration
+                if shortfall > 5.0:
+                    raise RuntimeError(
+                        f"Input video duration ({video_duration:.1f}s) is much shorter than requested clip ({duration:.1f}s). "
+                        f"Requested clip: {start:.1f}s to {end:.1f}s. "
+                        f"This likely indicates a failed segment download. File: {video_path}"
+                    )
+                # Small shortfall — clamp to actual video duration
+                logger.info(
+                    f"Clamping clip end from {end:.1f}s to {start + video_duration:.1f}s "
+                    f"(video {video_duration:.1f}s, clip {duration:.1f}s, shortfall {shortfall:.1f}s)"
                 )
+                end = start + video_duration
+                duration = video_duration
+                # Clamp keep_segments so no segment extends past the video
+                if keep_segments:
+                    keep_segments = [
+                        KeepSegment(start=seg.start, end=min(seg.end, end))
+                        for seg in keep_segments
+                        if seg.start < end
+                    ]
+                    keep_segments = [seg for seg in keep_segments if seg.end > seg.start]
         except (json.JSONDecodeError, KeyError, ValueError):
             pass  # If we can't parse duration, proceed and let ffmpeg fail with more info
 
