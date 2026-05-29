@@ -57,7 +57,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
   const [clips, setClipsState] = useState<Clip[] | null>(null)
 
   const [config, setConfigState] = useState<Config>({
-    whisperModel: 'large-v3',
+    whisperModel: 'small',
     whisperDevice: 'auto',
     llmModel: '',
     llmBaseUrl: '',

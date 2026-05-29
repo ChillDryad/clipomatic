@@ -6,11 +6,12 @@ import { usePipeline } from '../../context/PipelineContext'
 import { fetchModels, saveConfig } from '../../api'
 
 const WHISPER_MODELS = [
-  { value: 'large-v3', label: 'large-v3' },
-  { value: 'large-v2', label: 'large-v2' },
-  { value: 'medium', label: 'medium' },
-  { value: 'small', label: 'small' },
-  { value: 'base', label: 'base' },
+  { value: 'tiny', label: 'tiny — fastest, lowest accuracy' },
+  { value: 'base', label: 'base — fast, basic accuracy' },
+  { value: 'small', label: 'small — good balance (default)' },
+  { value: 'medium', label: 'medium — better accuracy' },
+  { value: 'large-v3-turbo', label: 'large-v3-turbo — great accuracy, faster than v3' },
+  { value: 'large-v3', label: 'large-v3 — best accuracy, slowest' },
 ]
 
 const WHISPER_DEVICES = [

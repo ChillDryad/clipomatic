@@ -157,7 +157,7 @@ def _run_transcribe(project_data: dict, config: dict, progress_cb) -> dict:
     result = transcription.transcribe(
         video_path=video_path,
         output_dir=WORKSPACE,
-        model_size=config.get("whisper_model", "large-v3"),
+        model_size=config.get("whisper_model", "small"),
         device=config.get("device", "auto"),
         language=config.get("language"),
         progress_callback=progress_cb,

@@ -477,7 +477,7 @@ def _default_config() -> dict:
     import os
 
     return {
-        "whisper_model": os.environ.get("WHISPER_MODEL", "large-v3"),
+        "whisper_model": os.environ.get("WHISPER_MODEL", "small"),
         "device": os.environ.get("WHISPER_DEVICE", "auto"),
         "llm_model": os.environ.get("LLM_MODEL", "llama3"),
     }
