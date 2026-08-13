@@ -57,6 +57,8 @@ async def highlights(req: HighlightsRequest):
             model=req.model,
             timeout_per_chunk=timeout_per_chunk,
             fallback_model=fallback_model,
+            audio_energy=req.transcript.get("audio_energy"),
+            vision_data=req.transcript.get("vision_analysis"),
         ):
             yield event_str
             # When done, persist the clips to disk and database

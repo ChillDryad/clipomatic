@@ -111,6 +111,10 @@ async def transcribe(req: TranscribeRequest):
                                 transcript_record.segments = json.dumps(
                                     transcript_data.get("segments", [])
                                 )
+                                audio_energy = transcript_data.get("audio_energy")
+                                transcript_record.audio_energy = json.dumps(audio_energy) if audio_energy else None
+                                vision_analysis = transcript_data.get("vision_analysis")
+                                transcript_record.vision_analysis = json.dumps(vision_analysis) if vision_analysis else None
                             else:
                                 # Create new
                                 transcript_record = Transcript(
@@ -124,6 +128,8 @@ async def transcribe(req: TranscribeRequest):
                                     segments=json.dumps(
                                         transcript_data.get("segments", [])
                                     ),
+                                    audio_energy=json.dumps(transcript_data.get("audio_energy", [])) if transcript_data.get("audio_energy") else None,
+                                    vision_analysis=json.dumps(transcript_data.get("vision_analysis", [])) if transcript_data.get("vision_analysis") else None,
                                 )
                                 session.add(transcript_record)
                     await session.commit()
@@ -197,6 +203,10 @@ async def save_cached_transcript(
             )
             transcript_record.duration = req.transcript.get("duration")
             transcript_record.segments = json.dumps(req.transcript.get("segments", []))
+            audio_energy = req.transcript.get("audio_energy")
+            transcript_record.audio_energy = json.dumps(audio_energy) if audio_energy else None
+            vision_analysis = req.transcript.get("vision_analysis")
+            transcript_record.vision_analysis = json.dumps(vision_analysis) if vision_analysis else None
         else:
             # Create new
             transcript_record = Transcript(
@@ -206,6 +216,8 @@ async def save_cached_transcript(
                 language_probability=req.transcript.get("language_probability"),
                 duration=req.transcript.get("duration"),
                 segments=json.dumps(req.transcript.get("segments", [])),
+                audio_energy=json.dumps(req.transcript.get("audio_energy", [])) if req.transcript.get("audio_energy") else None,
+                vision_analysis=json.dumps(req.transcript.get("vision_analysis", [])) if req.transcript.get("vision_analysis") else None,
             )
             session.add(transcript_record)
 

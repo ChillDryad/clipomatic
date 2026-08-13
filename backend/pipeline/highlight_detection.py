@@ -89,6 +89,16 @@ The transcript includes audio energy annotations marked as:
 - RAPID_SPEECH: Speaking rate above average — may indicate excitement or urgency
 Use these annotations to better score the Hook and Emotional Peak criteria. A SPIKE near the start of a clip strongly suggests a good hook. A SILENCE followed by a SPIKE is a classic setup-payoff pattern."""
 
+_VISION_SYSTEM_APPEND = """
+
+## VISUAL ANALYSIS ANNOTATIONS
+The transcript includes visual frame analysis marked as:
+- HIGH_ENERGY: Frame with high visual activity — intense gameplay, dramatic on-screen moment
+- EMOTION: Detected facial/avatar expression (happy, angry, surprised, laughing, etc.)
+- ON_SCREEN_TEXT: Donation alert, notification, or significant text overlay visible
+- SCENE: Non-standard scene type (loading, menu, transition, overlay)
+Use these to catch moments that transcripts miss — laughter visible on a face, clutch gameplay moments, or donation reactions. A HIGH_ENERGY frame near a transcript spike strongly suggests a viral moment."""
+
 # Token limit for transcript chunk — increased for Gemma4's larger context
 # ~24k tokens ≈ 96k chars (Gemma4 can handle more than llama3)
 _MAX_CHUNK_CHARS = 96_000
@@ -467,6 +477,7 @@ def detect_highlights(
     timeout_per_chunk: float = 300.0,  # 5 minutes per LLM call (increased for larger models)
     fallback_model: str = _FALLBACK_MODEL,
     audio_energy: list[dict] | None = None,
+    vision_data: list[dict] | None = None,
 ) -> list[dict]:
     """
     Single-turn approach optimized for Gemma4 with automatic fallback.
@@ -499,6 +510,12 @@ def detect_highlights(
     audio_annotations = _format_audio_annotations(audio_energy, word_density)
     system_prompt_suffix = _AUDIO_ENERGY_SYSTEM_APPEND if audio_annotations else ""
 
+    # Build vision annotations if available
+    from pipeline.vision import format_vision_annotations
+    vision_annotations = format_vision_annotations(vision_data)
+    if vision_annotations:
+        system_prompt_suffix += _VISION_SYSTEM_APPEND
+
     # Target 6-12 clips per hour of stream (use ~9/hour as midpoint), minimum 8 total
     duration_hours = transcript.get("duration", 0) / 3600
     total_target = max(8, round(duration_hours * 9))
@@ -523,6 +540,8 @@ def detect_highlights(
         user_message = f"Transcript (part {i + 1} of {n_chunks}):\n\n{chunk}"
         if audio_annotations:
             user_message += audio_annotations
+        if vision_annotations:
+            user_message += vision_annotations
 
         # Try primary model first (Gemma4)
         _cb(base_progress, f"{chunk_label} — analyzing with {model}…")

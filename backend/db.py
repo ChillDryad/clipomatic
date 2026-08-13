@@ -489,6 +489,7 @@ class Transcript(Base):
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
     segments: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array of segments with words
     audio_energy: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of per-second audio energy data
+    vision_analysis: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of per-frame vision analysis data
     created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
     updated_at: Mapped[float] = mapped_column(Float, default=lambda: time.time(), onupdate=lambda: time.time())
 

@@ -205,6 +205,7 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
         timeout_per_chunk=timeout_per_chunk,
         fallback_model=fallback_model,
         audio_energy=transcript_data.get("audio_energy"),
+        vision_data=transcript_data.get("vision_analysis"),
     )
 
     # Write to cache file
@@ -237,6 +238,7 @@ def _load_transcript_from_db(project_id: str) -> dict | None:
                 "duration": record.duration,
                 "segments": json.loads(record.segments) if isinstance(record.segments, str) else record.segments,
                 "audio_energy": json.loads(record.audio_energy) if record.audio_energy else [],
+                "vision_analysis": json.loads(record.vision_analysis) if record.vision_analysis else [],
             }
 
     return asyncio.run(_inner())
@@ -260,6 +262,8 @@ def _persist_transcript_sync(project_id: str, source_path: str, result: dict) ->
                 transcript_record.segments = json.dumps(result.get("segments", []))
                 audio_energy = result.get("audio_energy")
                 transcript_record.audio_energy = json.dumps(audio_energy) if audio_energy else None
+                vision_analysis = result.get("vision_analysis")
+                transcript_record.vision_analysis = json.dumps(vision_analysis) if vision_analysis else None
             else:
                 transcript_record = Transcript(
                     project_id=project_id,
@@ -269,6 +273,7 @@ def _persist_transcript_sync(project_id: str, source_path: str, result: dict) ->
                     duration=result.get("duration"),
                     segments=json.dumps(result.get("segments", [])),
                     audio_energy=json.dumps(result.get("audio_energy", [])) if result.get("audio_energy") else None,
+                    vision_analysis=json.dumps(result.get("vision_analysis", [])) if result.get("vision_analysis") else None,
                 )
                 session.add(transcript_record)
 

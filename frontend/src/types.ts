@@ -17,6 +17,26 @@ export interface Transcript {
   language_probability: number
   duration: number
   segments: Segment[]
+  audio_energy?: AudioEnergySegment[]
+  vision_analysis?: VisionFrameAnalysis[]
+}
+
+export interface AudioEnergySegment {
+  start: number
+  end: number
+  peak: number
+  rms: number
+  silence_ratio: number
+  is_spike: boolean
+}
+
+export interface VisionFrameAnalysis {
+  timestamp: number
+  visual_energy: number  // 1-10
+  scene_type: string  // "gameplay", "talking_head", "loading", "menu", etc.
+  description: string
+  has_text_overlay: boolean
+  emotional_tone: string  // "neutral", "happy", "angry", "surprised", etc.
 }
 
 export interface Clip {

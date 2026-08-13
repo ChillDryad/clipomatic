@@ -226,6 +226,34 @@ def transcribe(
             logger.warning(f"Audio energy analysis failed (non-fatal): {exc}")
             result["audio_energy"] = []
 
+        # Run vision analysis if a video file is available
+        if video_path and os.path.exists(video_path):
+            try:
+                from pipeline.vision import analyze_video_frames
+
+                vision_model = os.environ.get("VISION_MODEL", os.environ.get("LLM_MODEL", "llava:13b"))
+                vision_api_key = os.environ.get("LLM_API_KEY", "")
+                vision_base_url = os.environ.get("LLM_BASE_URL", "")
+                vision_interval = float(os.environ.get("VISION_SAMPLE_INTERVAL", "30"))
+
+                if vision_api_key and vision_base_url:
+                    _fire(progress_callback, 0.98, f"Analyzing video frames with {vision_model}…")
+                    vision_data = analyze_video_frames(
+                        video_path=video_path,
+                        output_dir=output_dir,
+                        api_key=vision_api_key,
+                        base_url=vision_base_url,
+                        model=vision_model,
+                        sample_interval=vision_interval,
+                        progress_callback=lambda f, l: _fire(progress_callback, 0.98 + f * 0.01, l),
+                    )
+                    result["vision_analysis"] = vision_data
+                else:
+                    logger.info("Vision analysis skipped — LLM_API_KEY/LLM_BASE_URL not set")
+            except Exception as exc:
+                logger.warning(f"Vision analysis failed (non-fatal): {exc}")
+                result["vision_analysis"] = []
+
     finally:
         # Only delete temp audio if we created it (not if the caller provided it)
         if _temp_audio and os.path.exists(_temp_audio):

@@ -510,6 +510,36 @@ function ClipCard({
 
       <p className="text-sm text-[var(--ctp-subtext)] italic">{clip.reason}</p>
 
+      {/* Vision + audio signal indicators */}
+      {transcript?.vision_analysis && transcript.vision_analysis.length > 0 && (() => {
+        const clipVision = transcript.vision_analysis.filter(
+          (v) => v.timestamp >= clip.start && v.timestamp <= clip.end
+        )
+        if (clipVision.length === 0) return null
+        const maxEnergy = Math.max(...clipVision.map(v => v.visual_energy))
+        const emotions = [...new Set(clipVision.map(v => v.emotional_tone).filter(Boolean))]
+        const hasOverlay = clipVision.some(v => v.has_text_overlay)
+        return (
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {maxEnergy >= 7 && (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-[var(--ctp-peach)]/20 text-[var(--ctp-peach)]">
+                👁 High visual energy ({maxEnergy}/10)
+              </span>
+            )}
+            {emotions.length > 0 && emotions.map(e => (
+              <span key={e} className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-[var(--ctp-pink)]/20 text-[var(--ctp-pink)]">
+                {e}
+              </span>
+            ))}
+            {hasOverlay && (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-[var(--ctp-sky)]/20 text-[var(--ctp-sky)]">
+                💬 On-screen text
+              </span>
+            )}
+          </div>
+        )
+      })()}
+
       <div className="flex flex-wrap gap-2 text-xs">
         {clip.brand_alignment.length > 0
           ? clip.brand_alignment.map((b) => (
