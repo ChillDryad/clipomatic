@@ -12,7 +12,7 @@ import os
 import time
 from collections import defaultdict
 
-from db import PipelineJob, VideoProject, get_session_cm
+from db import PipelineJob, PipelineEvent, VideoProject, ClipStudioQueue, get_session_cm
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
@@ -61,9 +61,61 @@ class PipelineDispatcher:
         while self._running:
             try:
                 await self._dispatch_next()
+                await self._dispatch_clip_studio()
             except Exception as exc:
                 logger.exception("Dispatcher error: %s", exc)
             await asyncio.sleep(self._poll_interval)
+
+    async def _dispatch_clip_studio(self) -> None:
+        """Poll queued Clip Studio items and dispatch to Celery."""
+        async with get_session_cm() as session:
+            result = await session.execute(
+                select(ClipStudioQueue)
+                .where(ClipStudioQueue.status == "queued")
+                .order_by(ClipStudioQueue.priority.desc(), ClipStudioQueue.queued_at.asc())
+            )
+            queued_items = result.scalars().all()
+
+            if not queued_items:
+                return
+
+            # Check capacity (clip studio uses GPU for transcribe step)
+            gpu_running = sum(1 for info in self._active_jobs.values() if info["resource"] == "gpu")
+            user_active = defaultdict(int)
+            for info in self._active_jobs.values():
+                user_active[info["owner_id"]] += 1
+
+            to_dispatch = []
+            for item in queued_items:
+                if user_active[item.owner_id] >= self._max_per_user:
+                    continue
+                if gpu_running >= self._max_gpu:
+                    continue
+
+                item.status = "processing"
+                item.started_at = time.time()
+                to_dispatch.append((item.id, item.owner_id))
+                user_active[item.owner_id] += 1
+                gpu_running += 1
+
+        for queue_id, owner_id in to_dispatch:
+            await self._dispatch_clip_studio_to_celery(queue_id, owner_id)
+
+    async def _dispatch_clip_studio_to_celery(self, queue_id: str, owner_id: str) -> None:
+        """Send a Clip Studio queue item to Celery for execution."""
+        from celery_app import process_clip_studio_task
+
+        result = process_clip_studio_task.delay(queue_id)
+
+        self._active_jobs[f"cs_{queue_id}"] = {
+            "job_id": f"cs_{queue_id}",
+            "owner_id": owner_id,
+            "resource": "gpu",
+            "celery_task_id": result.id,
+            "started_at": time.time(),
+        }
+
+        logger.info("Dispatched Clip Studio item %s (task %s) for user %s", queue_id, result.id, owner_id)
 
     async def _dispatch_next(self) -> None:
         """Select and dispatch the next eligible job(s) to Celery."""
@@ -160,12 +212,22 @@ class PipelineDispatcher:
         """Remove completed jobs from active tracking."""
         stale = []
         for job_id, info in self._active_jobs.items():
-            result = await session.execute(
-                select(PipelineJob.status).where(PipelineJob.id == job_id)
-            )
-            status = result.scalar_one_or_none()
-            if status in ("completed", "failed", "cancelled", "paused"):
-                stale.append(job_id)
+            if job_id.startswith("cs_"):
+                # Clip Studio queue item
+                cs_id = job_id[3:]
+                result = await session.execute(
+                    select(ClipStudioQueue.status).where(ClipStudioQueue.id == cs_id)
+                )
+                status = result.scalar_one_or_none()
+                if status in ("completed", "failed", "cancelled"):
+                    stale.append(job_id)
+            else:
+                result = await session.execute(
+                    select(PipelineJob.status).where(PipelineJob.id == job_id)
+                )
+                status = result.scalar_one_or_none()
+                if status in ("completed", "failed", "cancelled", "paused"):
+                    stale.append(job_id)
         for job_id in stale:
             del self._active_jobs[job_id]
 
@@ -177,8 +239,9 @@ class PipelineDispatcher:
         return "cpu"
 
     async def _recover_jobs(self) -> None:
-        """Recover jobs on startup: mark any 'running' jobs as failed (server restarted)."""
+        """Recover jobs on startup: mark any 'running'/'processing' jobs as failed (server restarted)."""
         async with get_session_cm() as session:
+            # Recover regular pipeline jobs
             result = await session.execute(
                 select(PipelineJob).where(PipelineJob.status == "running")
             )
@@ -187,8 +250,18 @@ class PipelineDispatcher:
                 job.status = "failed"
                 job.error_message = "Server restarted during processing"
                 job.completed_at = time.time()
-                # Don't increment retry_count — let the user retry manually
                 logger.info("Recovered job %s: marked as failed (server restart)", job.id)
+
+            # Recover Clip Studio queue items
+            cs_result = await session.execute(
+                select(ClipStudioQueue).where(ClipStudioQueue.status == "processing")
+            )
+            cs_running = cs_result.scalars().all()
+            for item in cs_running:
+                item.status = "failed"
+                item.error_message = "Server restarted during processing"
+                item.completed_at = time.time()
+                logger.info("Recovered Clip Studio item %s: marked as failed (server restart)", item.id)
 
     def get_active_count(self) -> int:
         """Return number of currently active (running) jobs."""

@@ -33,6 +33,7 @@ WORKSPACE = os.environ.get(
 _STEP_PROJECT_STATUS = {
     "transcribe": {"running": "transcribing", "done": "transcribed", "failed": "failed"},
     "highlights": {"running": "detecting", "done": "completed", "failed": "failed"},
+    "export_segments": {"running": "exporting", "done": "completed", "failed": "failed"},
 }
 
 
@@ -71,6 +72,8 @@ def pipeline_chain(self, job_id: str) -> None:
                 step_result = _run_transcribe(project_data, config, progress_cb)
             elif step_name == "highlights":
                 step_result = _run_highlights(project_data, config, progress_cb)
+            elif step_name == "export_segments":
+                step_result = _run_export_segments(project_data, config, progress_cb)
             else:
                 raise ValueError(f"Unknown pipeline step: {step_name}")
 
@@ -194,7 +197,7 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
         raise RuntimeError("LLM_API_KEY and LLM_BASE_URL must be set for highlight detection.")
 
     timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "300"))
-    fallback_model = os.environ.get("HIGHLIGHT_FALLBACK_MODEL", "phi3:mini")
+    fallback_model = os.environ.get("HIGHLIGHT_FALLBACK_MODEL", "gemma3:latest")
 
     detected_clips = highlight_detection.detect_highlights(
         transcript=transcript_data,
@@ -219,6 +222,58 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
     return detected_clips
 
 
+def _run_export_segments(project_data: dict, config: dict, progress_cb) -> dict:
+    """Run the Clip Studio source quality export step."""
+    from pipeline import renderer
+    from utils.helpers import _clips_cache_path
+    import json as _json
+
+    source_path = project_data["source_path"]
+    project_id = project_data["id"]
+
+    # Load clips from DB first, fall back to cache file
+    clips = _load_clips_from_db(project_id)
+    if not clips:
+        cache_path = _clips_cache_path(source_path)
+        if not os.path.exists(cache_path):
+            raise FileNotFoundError(f"Clips cache not found at {cache_path}")
+        with open(cache_path, "r", encoding="utf-8") as f:
+            clips = _json.load(f)
+
+    if not clips:
+        raise ValueError("No clips to export")
+
+    # Get Clip Studio config
+    clip_studio_config = config.get("clip_studio", {})
+    export_quality = clip_studio_config.get("export_quality", "source")
+    export_format = clip_studio_config.get("export_format", "mp4")
+    include_metadata = clip_studio_config.get("include_metadata", True)
+    generate_edl = clip_studio_config.get("generate_edl", False)
+    output_dir = clip_studio_config.get("output_dir", os.path.join(WORKSPACE, "clip_studio_exports"))
+
+    # Create export config
+    export_config = renderer.ClipStudioExportConfig(
+        export_quality=export_quality,
+        export_format=export_format,
+        include_metadata=include_metadata,
+        generate_edl=generate_edl,
+    )
+
+    # Run export
+    results = renderer.export_source_quality_segments(
+        video_path=source_path,
+        clips=clips,
+        output_dir=output_dir,
+        config=export_config,
+        progress_callback=progress_cb,
+    )
+
+    # Persist exports to DB
+    _persist_clip_studio_exports_sync(project_id, results)
+
+    return {"exports": results, "output_dir": output_dir}
+
+
 def _load_transcript_from_db(project_id: str) -> dict | None:
     """Load transcript data from the DB. Returns None if not found."""
     import asyncio
@@ -240,6 +295,36 @@ def _load_transcript_from_db(project_id: str) -> dict | None:
                 "audio_energy": json.loads(record.audio_energy) if record.audio_energy else [],
                 "vision_analysis": json.loads(record.vision_analysis) if record.vision_analysis else [],
             }
+
+    return asyncio.run(_inner())
+
+
+def _load_clips_from_db(project_id: str) -> list | None:
+    """Load detected clips from the DB. Returns None if not found."""
+    import asyncio
+    from sqlalchemy import select
+
+    async def _inner():
+        async with get_session_cm() as session:
+            result = await session.execute(
+                select(GeneratedClip).where(GeneratedClip.project_id == project_id).order_by(GeneratedClip.index)
+            )
+            clips = result.scalars().all()
+            if not clips:
+                return None
+            return [
+                {
+                    "title": clip.title,
+                    "start": clip.start_time,
+                    "end": clip.end_time,
+                    "reason": clip.reason,
+                    "recommendation_reason": clip.recommendation_reason,
+                    "virality_score": clip.virality_score,
+                    "brand_alignment": json.loads(clip.brand_alignment) if clip.brand_alignment else [],
+                    "hashtags": json.loads(clip.hashtags) if clip.hashtags else [],
+                }
+                for clip in clips
+            ]
 
     return asyncio.run(_inner())
 
@@ -308,6 +393,71 @@ def _persist_clips_sync(project_id: str, detected_clips: list) -> None:
                     hashtags=json.dumps(clip.get("hashtags", [])) if clip.get("hashtags") else None,
                 )
                 session.add(db_clip)
+
+    _run_async(_inner)
+
+
+def _persist_clip_studio_exports_sync(project_id: str, export_results: list) -> None:
+    """Persist Clip Studio exports to DB."""
+    import asyncio
+    from sqlalchemy import select
+
+    async def _inner():
+        async with get_session_cm() as session:
+            # We need to find the queue item for this project
+            from db import ClipStudioQueue, ClipStudioExport
+            
+            # Find active queue item for this project
+            result = await session.execute(
+                select(ClipStudioQueue).where(
+                    ClipStudioQueue.project_id == project_id
+                ).order_by(ClipStudioQueue.queued_at.desc())
+            )
+            queue_item = result.scalars().first()
+            
+            if not queue_item:
+                logger.warning(f"No ClipStudioQueue found for project {project_id}")
+                return
+            
+            # Delete existing exports for this queue
+            existing = await session.execute(
+                select(ClipStudioExport).where(ClipStudioExport.queue_id == queue_item.id)
+            )
+            for old_export in existing.scalars().all():
+                await session.delete(old_export)
+            
+            # Insert new exports
+            for idx, exp in enumerate(export_results):
+                metadata = exp.get("metadata", {})
+                db_export = ClipStudioExport(
+                    queue_id=queue_item.id,
+                    project_id=project_id,
+                    clip_index=exp.get("index", idx),
+                    title=exp.get("title", ""),
+                    start_time=exp.get("start_time", 0),
+                    end_time=exp.get("end_time", 0),
+                    duration=exp.get("duration", 0),
+                    virality_score=exp.get("virality_score"),
+                    brand_alignment=json.dumps(metadata.get("brand_alignment", [])) if metadata.get("brand_alignment") else None,
+                    reason=metadata.get("reason"),
+                    export_path=exp.get("export_path", ""),
+                    export_format=metadata.get("export_format", "mp4"),
+                    export_quality=metadata.get("export_quality", "source"),
+                    file_size=exp.get("file_size"),
+                    width=exp.get("width"),
+                    height=exp.get("height"),
+                    video_codec=exp.get("video_codec"),
+                    audio_codec=exp.get("audio_codec"),
+                    bitrate=exp.get("bitrate"),
+                    metadata_json=json.dumps(metadata),
+                )
+                session.add(db_export)
+            
+            # Update queue item status
+            queue_item.status = "completed"
+            queue_item.progress = 1.0
+            queue_item.current_step = "export"
+            queue_item.completed_at = time.time()
 
     _run_async(_inner)
 

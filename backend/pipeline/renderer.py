@@ -572,8 +572,308 @@ def _build_ass_word_by_word(
 
 
 # ---------------------------------------------------------------------------
-# FFmpeg rendering
+# Clip Studio Export — Source Quality Segment Export
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class ClipStudioExportConfig:
+    """Configuration for Clip Studio source quality export."""
+    export_quality: str = "source"  # "source", "visually_lossless", "high"
+    export_format: str = "mp4"  # "mp4", "mov", "mkv"
+    include_metadata: bool = True
+    generate_edl: bool = False  # Edit Decision List for DaVinci/Premiere
+
+
+_QUALITY_SETTINGS_CLIP_STUDIO: dict[str, dict] = {
+    "source": {
+        "description": "Stream copy — zero quality loss, fastest",
+        "video_codec": "copy",
+        "audio_codec": "copy",
+        "extra_args": [],
+    },
+    "visually_lossless": {
+        "description": "Visually lossless re-encode — CRF 12, very slow preset",
+        "video_codec": "libx264",
+        "audio_codec": "copy",
+        "crf": "12",
+        "preset": "veryslow",
+        "tune": "grain",
+        "profile": "high",
+        "level": "4.2",
+        "pix_fmt": "yuv420p",
+        "extra_args": [],
+    },
+    "high": {
+        "description": "High quality — CRF 18, medium preset",
+        "video_codec": "libx264",
+        "audio_codec": "copy",
+        "crf": "18",
+        "preset": "medium",
+        "tune": "film",
+        "profile": "high",
+        "level": "4.1",
+        "pix_fmt": "yuv420p",
+        "extra_args": [],
+    },
+}
+
+
+def export_source_quality_segments(
+    video_path: str,
+    clips: list[dict],
+    output_dir: str,
+    config: ClipStudioExportConfig = None,
+    progress_callback=None,
+) -> list[dict]:
+    """
+    Export clip segments at source quality (stream copy) or high quality re-encode.
+    
+    This function exports individual clip segments WITHOUT karaoke subtitles,
+    preserving the original video quality, resolution, and codecs.
+    
+    Args:
+        video_path: Path to the source video file
+        clips: List of clip dicts with start, end, title, etc.
+        output_dir: Directory to write exported segments
+        config: ClipStudioExportConfig with quality/format settings
+        progress_callback: Optional callback(fraction, label)
+        
+    Returns:
+        List of export result dicts with paths, metadata, and file info
+    """
+    import json
+    import subprocess
+    
+    config = config if config is not None else ClipStudioExportConfig()
+    os.makedirs(output_dir, exist_ok=True)
+    
+    quality_settings = _QUALITY_SETTINGS_CLIP_STUDIO.get(config.export_quality, _QUALITY_SETTINGS_CLIP_STUDIO["source"])
+    
+    def _cb(fraction: float, label: str):
+        if progress_callback:
+            progress_callback(fraction, label)
+    
+    # Get source video info
+    probe_cmd = [
+        "ffprobe", "-v", "quiet", "-show_entries",
+        "stream=codec_name,width,height,bit_rate,r_frame_rate:format=duration,bit_rate,format_name",
+        "-of", "json", video_path
+    ]
+    probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+    source_info = {}
+    if probe_result.returncode == 0 and probe_result.stdout.strip():
+        try:
+            source_info = json.loads(probe_result.stdout)
+        except json.JSONDecodeError:
+            pass
+    
+    video_stream = next((s for s in source_info.get("streams", []) if s.get("codec_type") == "video"), {})
+    audio_stream = next((s for s in source_info.get("streams", []) if s.get("codec_type") == "audio"), {})
+    format_info = source_info.get("format", {})
+    
+    source_width = video_stream.get("width")
+    source_height = video_stream.get("height")
+    source_video_codec = video_stream.get("codec_name")
+    source_audio_codec = audio_stream.get("codec_name")
+    source_duration = float(format_info.get("duration", 0))
+    
+    _cb(0.0, f"Exporting {len(clips)} segments at {config.export_quality} quality…")
+    
+    results = []
+    total_clips = len(clips)
+    
+    for i, clip in enumerate(clips):
+        clip_start = float(clip.get("start", 0))
+        clip_end = float(clip.get("end", 0))
+        clip_duration = clip_end - clip_start
+        
+        if clip_duration <= 0:
+            logger.warning(f"Skipping clip {clip.get('title', i)}: invalid duration")
+            continue
+        
+        if clip_start < 0 or clip_end > source_duration:
+            logger.warning(f"Skipping clip {clip.get('title', i)}: timestamps outside video duration")
+            continue
+        
+        _cb(i / total_clips, f"Exporting clip {i+1}/{total_clips}: {clip.get('title', 'Untitled')}")
+        
+        # Generate safe filename
+        safe_title = re.sub(r"[^\w\- ]", "", clip.get("title", f"clip_{i}"))[:60].strip()
+        out_filename = f"{safe_title}_{clip_start:.2f}_{clip_end:.2f}.{config.export_format}"
+        out_path = os.path.join(output_dir, out_filename)
+        
+        # Build FFmpeg command based on quality setting
+        if config.export_quality == "source":
+            # Stream copy - zero quality loss, fastest
+            cmd = [
+                "ffmpeg", "-y",
+                "-ss", str(clip_start),
+                "-i", video_path,
+                "-t", str(clip_duration),
+                "-c:v", "copy",
+                "-c:a", "copy",
+                "-avoid_negative_ts", "make_zero",
+                "-fflags", "+genpts",
+                out_path
+            ]
+        else:
+            # Re-encode with quality settings
+            settings = quality_settings
+            cmd = [
+                "ffmpeg", "-y",
+                "-ss", str(clip_start),
+                "-i", video_path,
+                "-t", str(clip_duration),
+                "-c:v", settings["video_codec"],
+                "-c:a", settings["audio_codec"],
+                "-preset", settings.get("preset", "medium"),
+                "-crf", settings.get("crf", "18"),
+                "-tune", settings.get("tune", "film"),
+                "-profile:v", settings.get("profile", "high"),
+                "-level", settings.get("level", "4.1"),
+                "-pix_fmt", settings.get("pix_fmt", "yuv420p"),
+                "-avoid_negative_ts", "make_zero",
+                "-fflags", "+genpts",
+                out_path
+            ]
+        
+        # Execute export
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            logger.error(f"Failed to export clip {clip.get('title', i)}: {result.stderr[:500]}")
+            # Try fallback to re-encode if stream copy failed
+            if config.export_quality == "source":
+                logger.info("Stream copy failed, retrying with re-encode...")
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-ss", str(clip_start),
+                    "-i", video_path,
+                    "-t", str(clip_duration),
+                    "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+                    "-c:a", "aac", "-b:a", "192k",
+                    out_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    logger.error(f"Fallback re-encode also failed: {result.stderr[:500]}")
+                    continue
+        
+        # Get exported file info
+        file_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
+        
+        # Probe exported file for metadata
+        export_probe = subprocess.run([
+            "ffprobe", "-v", "quiet", "-show_entries",
+            "stream=codec_name,width,height,bit_rate:format=duration,bit_rate",
+            "-of", "json", out_path
+        ], capture_output=True, text=True)
+        
+        export_info = {}
+        if export_probe.returncode == 0:
+            try:
+                export_info = json.loads(export_probe.stdout)
+            except json.JSONDecodeError:
+                pass
+        
+        export_video_stream = next((s for s in export_info.get("streams", []) if s.get("codec_type") == "video"), {})
+        export_audio_stream = next((s for s in export_info.get("streams", []) if s.get("codec_type") == "audio"), {})
+        export_format = export_info.get("format", {})
+        
+        # Build metadata
+        metadata = {
+            "clip_index": i,
+            "title": clip.get("title", ""),
+            "start_time": clip_start,
+            "end_time": clip_end,
+            "duration": clip_duration,
+            "virality_score": clip.get("virality_score"),
+            "brand_alignment": clip.get("brand_alignment", []),
+            "reason": clip.get("reason", ""),
+            "recommendation_reason": clip.get("recommendation_reason", ""),
+            "hashtags": clip.get("hashtags", []),
+            "description": clip.get("description", ""),
+            "description_hashtags": clip.get("description_hashtags", []),
+            "source_video": video_path,
+            "source_resolution": f"{source_width}x{source_height}",
+            "source_video_codec": source_video_codec,
+            "source_audio_codec": source_audio_codec,
+            "export_quality": config.export_quality,
+            "export_format": config.export_format,
+            "export_resolution": f"{export_video_stream.get('width', source_width)}x{export_video_stream.get('height', source_height)}",
+            "export_video_codec": export_video_stream.get("codec_name", source_video_codec),
+            "export_audio_codec": export_audio_stream.get("codec_name", source_audio_codec),
+            "export_bitrate": export_format.get("bit_rate"),
+            "file_size_bytes": file_size,
+        }
+        
+        # Write metadata JSON if requested
+        meta_path = None
+        if config.include_metadata:
+            meta_path = out_path.rsplit(".", 1)[0] + ".json"
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+        
+        results.append({
+            "index": i,
+            "title": clip.get("title", ""),
+            "start_time": clip_start,
+            "end_time": clip_end,
+            "duration": clip_duration,
+            "export_path": out_path,
+            "metadata_path": meta_path,
+            "file_size": file_size,
+            "width": export_video_stream.get("width", source_width),
+            "height": export_video_stream.get("height", source_height),
+            "video_codec": export_video_stream.get("codec_name", source_video_codec),
+            "audio_codec": export_audio_stream.get("codec_name", source_audio_codec),
+            "bitrate": export_format.get("bit_rate"),
+            "metadata": metadata,
+        })
+    
+    # Generate EDL if requested
+    if config.generate_edl and results:
+        edl_path = os.path.join(output_dir, "clip_studio_export.edl")
+        _generate_edl(results, edl_path, source_duration)
+        _cb(1.0, f"Exported {len(results)} segments + EDL")
+    else:
+        _cb(1.0, f"Exported {len(results)} segments")
+    
+    return results
+
+
+def _generate_edl(exports: list[dict], edl_path: str, source_duration: float):
+    """Generate CMX 3600 EDL for DaVinci Resolve / Premiere Pro import."""
+    lines = [
+        "TITLE: Clip Studio Export",
+        "FCM: NON-DROP FRAME",
+        ""
+    ]
+    
+    for i, exp in enumerate(exports):
+        start_tc = _seconds_to_timecode(exp["start_time"])
+        end_tc = _seconds_to_timecode(exp["end_time"])
+        # EDL format: EVENT_NUM  REEL  TRANSITION  SOURCE_IN  SOURCE_OUT  REC_IN  REC_OUT
+        # We use a simple single-track approach
+        lines.append(f"{i+1:03d}  SOURCEV  C        {start_tc} {end_tc} {start_tc} {end_tc}")
+        lines.append(f"* FROM CLIP: {exp['title']}")
+        lines.append(f"* VIRALITY: {exp.get('virality_score', 'N/A')}")
+        lines.append("")
+    
+    with open(edl_path, "w") as f:
+        f.write("\n".join(lines))
+
+
+def _seconds_to_timecode(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS:FF timecode (30fps)."""
+    fps = 30
+    total_frames = int(seconds * fps)
+    hours = total_frames // (3600 * fps)
+    minutes = (total_frames % (3600 * fps)) // (60 * fps)
+    secs = (total_frames % (60 * fps)) // fps
+    frames = total_frames % fps
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}:{frames:02d}"
 
 
 def render_clip(

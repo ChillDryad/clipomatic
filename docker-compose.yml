@@ -1,8 +1,25 @@
-# Base compose — works on any machine (CPU, Apple Silicon via Rosetta, AMD ROCm).
+# Base local compose stack. Ollama is private to this stack and cloud routing is disabled.
 # For Nvidia GPU passthrough, layer on the override:
 #   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up --build
 
 services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: momiji-ollama
+    environment:
+      - OLLAMA_NO_CLOUD=1
+      - OLLAMA_KEEP_ALIVE=5m
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    # Intentionally no ports: only services in this compose stack can reach Ollama.
+
   momiji-clipper:
     build:
       context: ./backend
@@ -17,15 +34,30 @@ services:
       - WORKSPACE_DIR=/app/workspace
       - WHISPER_MODEL=${WHISPER_MODEL:-small}
       - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
-      - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama:11434/v1}
-      - LLM_API_KEY=${LLM_API_KEY:-ollama}
-      - LLM_MODEL=${LLM_MODEL:-llama3}
+      - LLM_BASE_URL=http://ollama:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=${LLM_MODEL:-gemma4:12b}
+      - HIGHLIGHT_FALLBACK_MODEL=${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
+      - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma4:12b,gemma3:latest}
+      - VISION_MODEL=${VISION_MODEL:-gemma3:latest}
+      - VISION_SCAN_FPS=${VISION_SCAN_FPS:-1}
+      - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-60}
+      - VISION_MAX_FRAMES=${VISION_MAX_FRAMES:-360}
+      - VISION_BATCH_SIZE=${VISION_BATCH_SIZE:-4}
+      - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      # Clip Studio settings
+      - CLIP_STUDIO_EXPORT_QUALITY=${CLIP_STUDIO_EXPORT_QUALITY:-source}
+      - CLIP_STUDIO_EXPORT_FORMAT=${CLIP_STUDIO_EXPORT_FORMAT:-mp4}
+      - CLIP_STUDIO_INCLUDE_METADATA=${CLIP_STUDIO_INCLUDE_METADATA:-true}
+      - CLIP_STUDIO_GENERATE_EDL=${CLIP_STUDIO_GENERATE_EDL:-false}
     depends_on:
       redis:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     restart: unless-stopped
 
@@ -56,14 +88,28 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - WHISPER_MODEL=${WHISPER_MODEL:-small}
       - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
-      - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama:11434/v1}
-      - LLM_API_KEY=${LLM_API_KEY:-ollama}
-      - LLM_MODEL=${LLM_MODEL:-llama3}
+      - LLM_BASE_URL=http://ollama:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=${LLM_MODEL:-gemma4:12b}
+      - HIGHLIGHT_FALLBACK_MODEL=${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
+      - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma4:12b,gemma3:latest}
+      - VISION_MODEL=${VISION_MODEL:-gemma3:latest}
+      - VISION_SCAN_FPS=${VISION_SCAN_FPS:-1}
+      - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-60}
+      - VISION_MAX_FRAMES=${VISION_MAX_FRAMES:-360}
+      - VISION_BATCH_SIZE=${VISION_BATCH_SIZE:-4}
       - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
+      # Clip Studio settings
+      - CLIP_STUDIO_EXPORT_QUALITY=${CLIP_STUDIO_EXPORT_QUALITY:-source}
+      - CLIP_STUDIO_EXPORT_FORMAT=${CLIP_STUDIO_EXPORT_FORMAT:-mp4}
+      - CLIP_STUDIO_INCLUDE_METADATA=${CLIP_STUDIO_INCLUDE_METADATA:-true}
+      - CLIP_STUDIO_GENERATE_EDL=${CLIP_STUDIO_GENERATE_EDL:-false}
     depends_on:
       redis:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     restart: unless-stopped
 
@@ -77,3 +123,6 @@ services:
     depends_on:
       - momiji-clipper
     restart: unless-stopped
+
+volumes:
+  ollama_data:

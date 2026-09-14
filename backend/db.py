@@ -565,3 +565,99 @@ class PipelineEvent(Base):
     created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
 
     job: Mapped[PipelineJob] = relationship(back_populates="pipeline_events")
+
+
+# ---------------------------------------------------------------------------
+# API Key Model (for agent/programmatic access)
+# ---------------------------------------------------------------------------
+
+
+class ApiKey(Base):
+    """
+    Long-lived API key for programmatic access (agents, scripts, CLI tools).
+    Keys are stored as bcrypt hashes — the plaintext is only shown once at creation.
+    """
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: uuid.uuid4().hex)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    key_hash: Mapped[str] = mapped_column(String, nullable=False)  # bcrypt hash
+    label: Mapped[str] = mapped_column(String, nullable=False)  # e.g. "manager-agent"
+    key_prefix: Mapped[str] = mapped_column(String, nullable=False)  # first 12 chars for display
+    scopes: Mapped[str] = mapped_column(Text, nullable=True)  # JSON array, null = all scopes
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_used_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expires_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
+
+    user: Mapped[User] = relationship()
+
+# ---------------------------------------------------------------------------
+# Clip Studio Queue Models (Source Quality Export)
+# ---------------------------------------------------------------------------
+
+
+class ClipStudioQueue(Base):
+    """Batch queue for Clip Studio mode - process multiple videos for clip finding."""
+    __tablename__ = "clip_studio_queue"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: uuid.uuid4().hex)
+    project_id: Mapped[str] = mapped_column(
+        String, ForeignKey("video_projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    owner_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String, default="queued", index=True
+    )  # queued, processing, completed, failed, cancelled
+    priority: Mapped[int] = mapped_column(default=0)
+    config: Mapped[str] = mapped_column(Text, nullable=False)  # JSON: export_quality, export_format, etc.
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    current_step: Mapped[str] = mapped_column(String, nullable=True)  # ingest, transcribe, highlights, export
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    queued_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
+    started_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    completed_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
+    updated_at: Mapped[float] = mapped_column(Float, default=lambda: time.time(), onupdate=lambda: time.time())
+
+    project: Mapped[VideoProject] = relationship()
+    exports: Mapped[list["ClipStudioExport"]] = relationship(
+        back_populates="queue_item", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class ClipStudioExport(Base):
+    """Individual exported clip segment from Clip Studio processing."""
+    __tablename__ = "clip_studio_exports"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: uuid.uuid4().hex)
+    queue_id: Mapped[str] = mapped_column(
+        String, ForeignKey("clip_studio_queue.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String, ForeignKey("video_projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    clip_index: Mapped[int] = mapped_column(nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    start_time: Mapped[float] = mapped_column(Float, nullable=False)
+    end_time: Mapped[float] = mapped_column(Float, nullable=False)
+    duration: Mapped[float] = mapped_column(Float, nullable=False)
+    virality_score: Mapped[int | None] = mapped_column(nullable=True)
+    brand_alignment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    export_path: Mapped[str] = mapped_column(String, nullable=False)  # Path to exported segment
+    export_format: Mapped[str] = mapped_column(String, nullable=False)  # mp4, mov, etc.
+    export_quality: Mapped[str] = mapped_column(String, nullable=False)  # source, visually_lossless, high
+    file_size: Mapped[int | None] = mapped_column(nullable=True)
+    width: Mapped[int | None] = mapped_column(nullable=True)
+    height: Mapped[int | None] = mapped_column(nullable=True)
+    video_codec: Mapped[str | None] = mapped_column(nullable=True)
+    audio_codec: Mapped[str | None] = mapped_column(nullable=True)
+    bitrate: Mapped[int | None] = mapped_column(nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False)  # Full clip metadata
+    created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
+
+    queue_item: Mapped[ClipStudioQueue] = relationship(back_populates="exports")
+    project: Mapped[VideoProject] = relationship()

@@ -9,6 +9,7 @@ import { VideoProjectPage } from './pages/VideoProjectPage'
 import { TimelineEditorPage } from './pages/TimelineEditorPage'
 import { SchedulePage } from './pages/SchedulePage'
 import { QueuePage } from './pages/QueuePage'
+import ClipStudioPage from './pages/ClipStudioPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { TeamListPage } from './pages/TeamListPage'
@@ -133,6 +134,16 @@ export default function App() {
                 <ProtectedRoute>
                   <PageLayout>
                     <QueuePage />
+                  </PageLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/clip-studio"
+              element={
+                <ProtectedRoute>
+                  <PageLayout>
+                    <ClipStudioPage />
                   </PageLayout>
                 </ProtectedRoute>
               }

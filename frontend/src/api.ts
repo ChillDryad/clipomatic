@@ -1651,3 +1651,180 @@ export async function getPipelineQueueStatus(): Promise<{
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
+
+// ---------------------------------------------------------------------------
+// API Keys
+// ---------------------------------------------------------------------------
+
+export interface ApiKeyInfo {
+  id: string
+  label: string
+  key_prefix: string
+  scopes: string[] | null
+  is_active: boolean
+  last_used_at: number | null
+  expires_at: number | null
+  created_at: number
+}
+
+export interface CreateApiKeyResult {
+  key: string
+  id: string
+  label: string
+  key_prefix: string
+  scopes: string[] | null
+  expires_at: number | null
+  created_at: number
+}
+
+export async function listApiKeys(): Promise<ApiKeyInfo[]> {
+  const res = await fetch('/api/api-keys', { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function createApiKey(label: string, scopes?: string[], expiresAt?: number): Promise<CreateApiKeyResult> {
+  const res = await fetch('/api/api-keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ label, scopes, expires_at: expiresAt }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function revokeApiKey(keyId: string): Promise<{ status: string }> {
+  const res = await fetch(`/api/api-keys/${keyId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function listApiKeyScopes(): Promise<{ scopes: string[] }> {
+  const res = await fetch('/api/api-keys/scopes', { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+// ---------------------------------------------------------------------------
+// Clip Studio - Source Quality Batch Export
+// ---------------------------------------------------------------------------
+
+export interface ClipStudioExport {
+  id: string
+  clip_index: number
+  title: string
+  start_time: number
+  end_time: number
+  duration: number
+  virality_score: number | null
+  brand_alignment: string[]
+  reason: string | null
+  export_path: string
+  export_format: string
+  export_quality: string
+  file_size: number | null
+  width: number | null
+  height: number | null
+  video_codec: string | null
+  audio_codec: string | null
+  bitrate: string | null
+  metadata: Record<string, unknown>
+  created_at: number
+}
+
+export interface ClipStudioQueueItem {
+  id: string
+  project_id: string
+  status: string
+  priority: number
+  config: Record<string, unknown>
+  progress: number
+  current_step: string | null
+  error_message: string | null
+  queued_at: number
+  started_at: number | null
+  completed_at: number | null
+  exports: ClipStudioExport[]
+}
+
+export async function enqueueClipStudio(
+  projectIds: string[],
+  config?: {
+    export_quality?: string
+    export_format?: string
+    include_metadata?: boolean
+    generate_edl?: boolean
+    output_dir?: string
+    priority?: number
+  },
+): Promise<{ queued: number; status: string }> {
+  const res = await fetch('/api/pipeline/clip-studio/enqueue', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ project_ids: projectIds, config }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function listClipStudioQueue(filters?: {
+  status?: string
+  limit?: number
+  offset?: number
+}): Promise<{ items: ClipStudioQueueItem[]; total: number; has_more: boolean }> {
+  const params = new URLSearchParams()
+  if (filters?.status) params.set('status', filters.status)
+  if (filters?.limit) params.set('limit', String(filters.limit))
+  if (filters?.offset) params.set('offset', String(filters.offset))
+  const res = await fetch(`/api/pipeline/clip-studio/queue?${params}`, { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function getClipStudioQueueItem(queueId: string): Promise<ClipStudioQueueItem> {
+  const res = await fetch(`/api/pipeline/clip-studio/queue/${queueId}`, { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function cancelClipStudioQueue(queueId: string): Promise<{ status: string }> {
+  const res = await fetch(`/api/pipeline/clip-studio/queue/${queueId}/cancel`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+// ---------------------------------------------------------------------------
+// Clip Studio - Process video through full pipeline then export at source quality
+// ---------------------------------------------------------------------------
+
+export async function processVideoForClips(
+  projectId: string,
+  config?: {
+    export_quality?: string
+    export_format?: string
+    include_metadata?: boolean
+    generate_edl?: boolean
+  },
+): Promise<{ queued: number; status: string }> {
+  return enqueueClipStudio([projectId], config)
+}
+
+export async function batchProcessVideosForClips(
+  projectIds: string[],
+  config?: {
+    export_quality?: string
+    export_format?: string
+    include_metadata?: boolean
+    generate_edl?: boolean
+  },
+): Promise<{ queued: number; status: string }> {
+  return enqueueClipStudio(projectIds, config)
+}

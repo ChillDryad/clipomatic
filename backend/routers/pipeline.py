@@ -14,13 +14,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
-from auth import get_current_user
+from auth import get_current_user_or_api_key
 from db import (
     PipelineJob,
     PipelineEvent,
     User,
     VideoProject,
+    ClipStudioQueue,
+    ClipStudioExport,
     get_session,
+)
+
+# WORKSPACE from api.py
+import os
+WORKSPACE = os.environ.get(
+    "WORKSPACE_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "workspace"),
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +54,31 @@ class RetryRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Clip Studio Queue Request / Response models
+# ---------------------------------------------------------------------------
+
+
+class ClipStudioQueueRequest(BaseModel):
+    project_ids: list[str]  # List of project IDs to process
+    config: dict | None = None  # Clip Studio config
+
+
+class ClipStudioQueueItemResponse(BaseModel):
+    id: str
+    project_id: str
+    status: str
+    priority: int
+    config: dict
+    progress: float
+    current_step: str | None
+    error_message: str | None
+    queued_at: float
+    started_at: float | None
+    completed_at: float | None
+    exports: list[dict] = []
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -52,7 +86,7 @@ class RetryRequest(BaseModel):
 @router.post("/enqueue")
 async def enqueue_job(
     req: EnqueueRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_session),
 ):
     """Enqueue a project for automated pipeline processing."""
@@ -109,7 +143,7 @@ async def list_jobs(
     status: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_session),
 ):
     """List pipeline jobs for the current user."""
@@ -137,7 +171,7 @@ async def list_jobs(
 @router.get("/jobs/{job_id}")
 async def get_job(
     job_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_session),
 ):
     """Get pipeline job details."""
@@ -154,7 +188,7 @@ async def get_job(
 async def get_job_events(
     job_id: str,
     since: float = Query(0),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_session),
 ):
     """Get progress events for a job since a given timestamp."""
@@ -192,7 +226,7 @@ async def get_job_events(
 async def stream_job_progress(
     job_id: str,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_session),
 ):
     """SSE stream for real-time job progress via Redis Pub/Sub."""
@@ -264,7 +298,7 @@ async def _job_sse_generator(job_id: str, job_status: str):
 @router.post("/jobs/{job_id}/cancel")
 async def cancel_job(
     job_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_session),
 ):
     """Cancel a queued or running job."""
@@ -308,7 +342,7 @@ async def cancel_job(
 async def retry_job(
     job_id: str,
     req: RetryRequest | None = None,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_session),
 ):
     """Retry a failed job."""
@@ -348,7 +382,7 @@ async def retry_job(
 @router.post("/jobs/{job_id}/pause")
 async def pause_job(
     job_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_session),
 ):
     """Pause a running job (completes current step, then pauses)."""
@@ -370,7 +404,7 @@ async def pause_job(
 @router.post("/jobs/{job_id}/resume")
 async def resume_job(
     job_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_session),
 ):
     """Resume a paused job."""
@@ -403,7 +437,7 @@ async def resume_job(
 @router.get("/queue")
 async def queue_status(
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_session),
 ):
     """Global queue status."""
@@ -486,3 +520,236 @@ def _default_config() -> dict:
 def _sse(data: Any) -> str:
     """Format data as SSE event string."""
     return f"data: {json.dumps(data)}\n\n"
+
+
+# ---------------------------------------------------------------------------
+# Clip Studio Queue Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/clip-studio/enqueue")
+async def enqueue_clip_studio(
+    req: ClipStudioQueueRequest,
+    user: User = Depends(get_current_user_or_api_key),
+    db: AsyncSession = Depends(get_session),
+):
+    """Enqueue multiple projects for Clip Studio batch processing."""
+    # Verify all projects exist and belong to user
+    result = await db.execute(
+        select(VideoProject).where(
+            VideoProject.id.in_(req.project_ids),
+            VideoProject.owner_id == user.id,
+        )
+    )
+    projects = result.scalars().all()
+    found_ids = {p.id for p in projects}
+    missing = set(req.project_ids) - found_ids
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Projects not found or access denied: {missing}",
+        )
+
+    # Build Clip Studio config
+    clip_studio_config = req.config or _default_clip_studio_config()
+
+    queued_count = 0
+    for project in projects:
+        # Create queue item for each project
+        queue_item = ClipStudioQueue(
+            project_id=project.id,
+            owner_id=user.id,
+            config=json.dumps(clip_studio_config),
+            status="queued",
+            priority=clip_studio_config.get("priority", 0),
+            queued_at=time.time(),
+        )
+        db.add(queue_item)
+        queued_count += 1
+
+        # Update project status
+        project.status = "queued"
+
+    await db.commit()
+    return {"queued": queued_count, "status": "queued"}
+
+
+@router.get("/clip-studio/queue")
+async def list_clip_studio_queue(
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user_or_api_key),
+    db: AsyncSession = Depends(get_session),
+):
+    """List Clip Studio queue items for the current user."""
+    query = select(ClipStudioQueue).where(ClipStudioQueue.owner_id == user.id)
+    count_query = select(func.count()).select_from(ClipStudioQueue).where(ClipStudioQueue.owner_id == user.id)
+
+    if status:
+        query = query.where(ClipStudioQueue.status == status)
+        count_query = count_query.where(ClipStudioQueue.status == status)
+
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    query = query.order_by(ClipStudioQueue.queued_at.desc()).offset(offset).limit(limit)
+    result = await db.execute(query)
+    items = result.scalars().all()
+
+    # Load exports for each item
+    items_with_exports = []
+    for item in items:
+        exports_result = await db.execute(
+            select(ClipStudioExport).where(ClipStudioExport.queue_id == item.id).order_by(ClipStudioExport.clip_index)
+        )
+        exports = exports_result.scalars().all()
+        items_with_exports.append({
+            "id": item.id,
+            "project_id": item.project_id,
+            "status": item.status,
+            "priority": item.priority,
+            "config": json.loads(item.config) if isinstance(item.config, str) else item.config,
+            "progress": item.progress,
+            "current_step": item.current_step,
+            "error_message": item.error_message,
+            "queued_at": item.queued_at,
+            "started_at": item.started_at,
+            "completed_at": item.completed_at,
+            "exports": [
+                {
+                    "id": exp.id,
+                    "clip_index": exp.clip_index,
+                    "title": exp.title,
+                    "start_time": exp.start_time,
+                    "end_time": exp.end_time,
+                    "duration": exp.duration,
+                    "virality_score": exp.virality_score,
+                    "brand_alignment": json.loads(exp.brand_alignment) if exp.brand_alignment else [],
+                    "reason": exp.reason,
+                    "export_path": exp.export_path,
+                    "export_format": exp.export_format,
+                    "export_quality": exp.export_quality,
+                    "file_size": exp.file_size,
+                    "width": exp.width,
+                    "height": exp.height,
+                    "video_codec": exp.video_codec,
+                    "audio_codec": exp.audio_codec,
+                    "bitrate": exp.bitrate,
+                    "metadata": json.loads(exp.metadata_json) if isinstance(exp.metadata_json, str) else exp.metadata_json,
+                    "created_at": exp.created_at,
+                }
+                for exp in exports
+            ],
+        })
+
+    return {
+        "items": items_with_exports,
+        "total": total,
+        "has_more": offset + limit < total,
+    }
+
+
+@router.get("/clip-studio/queue/{queue_id}")
+async def get_clip_studio_queue_item(
+    queue_id: str,
+    user: User = Depends(get_current_user_or_api_key),
+    db: AsyncSession = Depends(get_session),
+):
+    """Get a specific Clip Studio queue item with exports."""
+    result = await db.execute(
+        select(ClipStudioQueue).where(ClipStudioQueue.id == queue_id, ClipStudioQueue.owner_id == user.id)
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Queue item not found.")
+
+    exports_result = await db.execute(
+        select(ClipStudioExport).where(ClipStudioExport.queue_id == item.id).order_by(ClipStudioExport.clip_index)
+    )
+    exports = exports_result.scalars().all()
+
+    return {
+        "id": item.id,
+        "project_id": item.project_id,
+        "status": item.status,
+        "priority": item.priority,
+        "config": json.loads(item.config) if isinstance(item.config, str) else item.config,
+        "progress": item.progress,
+        "current_step": item.current_step,
+        "error_message": item.error_message,
+        "queued_at": item.queued_at,
+        "started_at": item.started_at,
+        "completed_at": item.completed_at,
+        "exports": [
+            {
+                "id": exp.id,
+                "clip_index": exp.clip_index,
+                "title": exp.title,
+                "start_time": exp.start_time,
+                "end_time": exp.end_time,
+                "duration": exp.duration,
+                "virality_score": exp.virality_score,
+                "brand_alignment": json.loads(exp.brand_alignment) if exp.brand_alignment else [],
+                "reason": exp.reason,
+                "export_path": exp.export_path,
+                "export_format": exp.export_format,
+                "export_quality": exp.export_quality,
+                "file_size": exp.file_size,
+                "width": exp.width,
+                "height": exp.height,
+                "video_codec": exp.video_codec,
+                "audio_codec": exp.audio_codec,
+                "bitrate": exp.bitrate,
+                "metadata": json.loads(exp.metadata_json) if isinstance(exp.metadata_json, str) else exp.metadata_json,
+                "created_at": exp.created_at,
+            }
+            for exp in exports
+        ],
+    }
+
+
+@router.post("/clip-studio/queue/{queue_id}/cancel")
+async def cancel_clip_studio_queue(
+    queue_id: str,
+    user: User = Depends(get_current_user_or_api_key),
+    db: AsyncSession = Depends(get_session),
+):
+    """Cancel a queued Clip Studio item."""
+    result = await db.execute(
+        select(ClipStudioQueue).where(ClipStudioQueue.id == queue_id, ClipStudioQueue.owner_id == user.id)
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Queue item not found.")
+
+    if item.status not in ("queued", "processing"):
+        raise HTTPException(status_code=400, detail=f"Cannot cancel item with status '{item.status}'.")
+
+    item.status = "cancelled"
+    item.error_message = "Cancelled by user"
+    item.completed_at = time.time()
+
+    # Revert project status
+    proj_result = await db.execute(
+        select(VideoProject).where(VideoProject.id == item.project_id)
+    )
+    project = proj_result.scalar_one_or_none()
+    if project:
+        project.status = "completed"
+
+    await db.commit()
+    return {"status": "cancelled"}
+
+
+def _default_clip_studio_config() -> dict:
+    """Default Clip Studio export configuration."""
+    import os
+    return {
+        "export_quality": os.environ.get("CLIP_STUDIO_EXPORT_QUALITY", "source"),
+        "export_format": os.environ.get("CLIP_STUDIO_EXPORT_FORMAT", "mp4"),
+        "include_metadata": os.environ.get("CLIP_STUDIO_INCLUDE_METADATA", "true").lower() == "true",
+        "generate_edl": os.environ.get("CLIP_STUDIO_GENERATE_EDL", "false").lower() == "true",
+        "output_dir": os.environ.get("CLIP_STUDIO_OUTPUT_DIR", os.path.join(WORKSPACE, "clip_studio_exports")),
+        "priority": 0,
+    }
