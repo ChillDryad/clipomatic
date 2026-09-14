@@ -14,7 +14,7 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -345,6 +345,100 @@ async def get_current_user(
     db: AsyncSession = Depends(get_session),
 ) -> User:
     """Get current authenticated user from JWT cookie."""
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = decode_access_token(access_token)
+    result = await db.execute(select(User).where(User.id == payload["sub"]))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    return user
+
+
+async def get_current_user_or_api_key(
+    request: Request,
+    access_token: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_session),
+) -> User:
+    """Authenticate via Bearer API key OR fall through to JWT cookie.
+
+    Checks the Authorization header for an API key (mc_live_...).
+    If not found, falls back to the existing JWT cookie auth.
+    """
+    from db import ApiKey
+    import json as _json
+    import time as _time
+
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer mc_live_"):
+        raw_key = auth_header.removeprefix("Bearer ").strip()
+
+        # Find all active keys and check the hash.
+        # bcrypt doesn't support lookup-by-hash, so we check by prefix
+        # first (indexed) then verify with bcrypt.
+        key_prefix = raw_key[:12]
+        result = await db.execute(
+            select(ApiKey).where(
+                ApiKey.key_prefix == key_prefix,
+                ApiKey.is_active == True,  # noqa: E712
+            )
+        )
+        candidates = result.scalars().all()
+
+        for candidate in candidates:
+            if verify_password(raw_key, candidate.key_hash):
+                # Check expiry
+                if candidate.expires_at and candidate.expires_at < _time.time():
+                    raise HTTPException(status_code=401, detail="API key expired")
+
+                # Load the user
+                user_result = await db.execute(
+                    select(User).where(User.id == candidate.user_id)
+                )
+                user = user_result.scalar_one_or_none()
+                if not user or not user.is_active:
+                    raise HTTPException(status_code=401, detail="User not found or inactive")
+
+                # Update last_used_at (fire and forget — don't block the request)
+                candidate.last_used_at = _time.time()
+
+                # Scope check: verify the requested endpoint is allowed
+                if candidate.scopes:
+                    scopes = _json.loads(candidate.scopes)
+                    # Derive scope from the request path: /api/pipeline/... -> "pipeline"
+                    path_parts = request.url.path.strip("/").split("/")
+                    if len(path_parts) >= 2 and path_parts[0] == "api":
+                        endpoint_scope = path_parts[1]
+                        # Map some router prefixes to scope names
+                        scope_map = {
+                            "render": "render",
+                            "timeline": "render",
+                            "media": "render",
+                            "markers": "render",
+                        }
+                        required_scope = scope_map.get(endpoint_scope, endpoint_scope)
+                        # Special case: /api/pipeline/clip-studio/* can be accessed
+                        # with either "pipeline" or "clip-studio" scope
+                        if (endpoint_scope == "pipeline"
+                                and len(path_parts) >= 3
+                                and path_parts[2] == "clip-studio"):
+                            if "clip-studio" not in scopes and "pipeline" not in scopes:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail="API key lacks scope: clip-studio or pipeline",
+                                )
+                        elif required_scope not in scopes:
+                            raise HTTPException(
+                                status_code=403,
+                                detail=f"API key lacks scope: {required_scope}",
+                            )
+
+                return user
+
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    # Fall through to JWT cookie auth
     if not access_token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 

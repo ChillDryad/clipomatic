@@ -600,7 +600,21 @@ def _run_async(coro_func):
 
     Celery workers are synchronous — no running event loop exists.
     We always use asyncio.run() which creates a fresh loop each time.
+
+    If called from within an already-running event loop (e.g. from
+    process_clip_studio_task which wraps everything in asyncio.run),
+    we use nest_asyncio or a thread-based approach to avoid the
+    'asyncio.run() cannot be called from a running event loop' error.
     """
     import asyncio
 
-    asyncio.run(coro_func())
+    try:
+        loop = asyncio.get_running_loop()
+        # We're inside a running loop — use a thread to run the coro
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, coro_func())
+            return future.result()
+    except RuntimeError:
+        # No running loop — safe to use asyncio.run directly
+        return asyncio.run(coro_func())
