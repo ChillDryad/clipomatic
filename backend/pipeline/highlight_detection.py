@@ -8,6 +8,7 @@ Optimized for Gemma4 (single-turn JSON output) with fallback to smaller models.
 import bisect
 import json
 import logging
+import os
 import re
 
 from pipeline.transcription import transcript_to_text
@@ -101,10 +102,10 @@ Use these to catch moments that transcripts miss — laughter visible on a face,
 
 # Token limit for transcript chunk — increased for Gemma4's larger context
 # ~24k tokens ≈ 96k chars (Gemma4 can handle more than llama3)
-_MAX_CHUNK_CHARS = 96_000
+_MAX_CHUNK_CHARS = 48_000  # Reduced from 96k for local model compatibility
 
 # Fallback model for when primary model times out (smaller, faster)
-_FALLBACK_MODEL = "phi3:mini"  # or "tinyllama:1.1b" for even faster fallback
+_FALLBACK_MODEL = "gemma3:latest"
 
 
 def _build_timestamp_indices(transcript: dict) -> tuple[list[float], list[float]]:
@@ -492,9 +493,18 @@ def detect_highlights(
         model: Primary model name (e.g., "gemma4:latest")
         progress_callback: Progress callback
         timeout_per_chunk: Timeout per LLM call in seconds (default 300s)
-        fallback_model: Fallback model name when primary fails (default "phi3:mini")
+        fallback_model: Fallback model name when primary fails (default "gemma3:latest")
         audio_energy: Optional per-second audio energy data from analyze_audio_energy()
     """
+    from llm_policy import validate_local_model
+
+    # Allow cloud models if LLM_ALLOW_CLOUD is set
+    if os.environ.get("LLM_ALLOW_CLOUD", "").lower() in ("1", "true", "yes"):
+        pass  # Skip validation — cloud models allowed
+    else:
+        model = validate_local_model(model)
+    fallback_model = validate_local_model(fallback_model)
+
     from openai import OpenAI
     from openai import APIError, APITimeoutError
 

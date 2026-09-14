@@ -80,6 +80,11 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
+      # Cloud LLM for highlight detection (host Ollama with cloud models)
+      - LLM_ALLOW_CLOUD=1
+      - HIGHLIGHT_LLM_BASE_URL=http://host.docker.internal:11434/v1
+      - HIGHLIGHT_LLM_API_KEY=ollama
+      - HIGHLIGHT_LLM_MODEL=gemma4:12b
     volumes:
       - ./workspace-dev:/app/workspace
     networks:

@@ -90,7 +90,7 @@ def process_clip_studio_task(self, queue_item_id: str) -> dict:
             pipeline_config = {
                 "whisper_model": config.get("whisper_model", "small"),
                 "device": config.get("device", "auto"),
-                "llm_model": config.get("llm_model", "gemma3:latest"),
+                "llm_model": config.get("llm_model", os.environ.get("HIGHLIGHT_LLM_MODEL", "gemma4:12b")),
                 "clip_studio": clip_studio_config,
             }
             

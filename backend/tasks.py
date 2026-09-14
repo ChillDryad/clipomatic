@@ -146,14 +146,30 @@ def _load_job(job_id: str):
             }
             return job.steps, job.current_step, project_data, config
 
-    return asyncio.run(_inner())
+    return _run_async(_inner)
 
 
 def _run_transcribe(project_data: dict, config: dict, progress_cb) -> dict:
     """Run the transcribe step."""
     from pipeline import transcription
+    from utils.helpers import _get_cached_transcript_path
 
     source_path = project_data["source_path"]
+
+    # Check for cached transcript file first — avoids re-running Whisper
+    stem = os.path.splitext(os.path.basename(source_path))[0]
+    cached_path = _get_cached_transcript_path(stem)
+    if cached_path:
+        logger.info("Found cached transcript at %s, skipping transcription", cached_path)
+        if progress_cb:
+            progress_cb(1.0, "Using cached transcript")
+        with open(cached_path, "r", encoding="utf-8") as f:
+            import json as _json
+            result = _json.load(f)
+        # Persist to DB (may have been skipped on previous run due to crash)
+        _persist_transcript_sync(project_data["id"], source_path, result)
+        return result
+
     video_path = source_path if os.path.exists(source_path) else None
     audio_path = source_path if not video_path else None
 
@@ -196,14 +212,19 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
     if not api_key or not base_url:
         raise RuntimeError("LLM_API_KEY and LLM_BASE_URL must be set for highlight detection.")
 
+    # Cloud model override: if LLM_ALLOW_CLOUD is set, use cloud endpoint for highlights
+    highlight_base_url = os.environ.get("HIGHLIGHT_LLM_BASE_URL", base_url)
+    highlight_api_key = os.environ.get("HIGHLIGHT_LLM_API_KEY", api_key)
+    highlight_model = config.get("llm_model", os.environ.get("HIGHLIGHT_LLM_MODEL", "gemma4:12b"))
+
     timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "300"))
     fallback_model = os.environ.get("HIGHLIGHT_FALLBACK_MODEL", "gemma3:latest")
 
     detected_clips = highlight_detection.detect_highlights(
         transcript=transcript_data,
-        api_key=api_key,
-        base_url=base_url,
-        model=config.get("llm_model", "gemma3:latest"),
+        api_key=highlight_api_key,
+        base_url=highlight_base_url,
+        model=highlight_model,
         progress_callback=progress_cb,
         timeout_per_chunk=timeout_per_chunk,
         fallback_model=fallback_model,
@@ -296,7 +317,7 @@ def _load_transcript_from_db(project_id: str) -> dict | None:
                 "vision_analysis": json.loads(record.vision_analysis) if record.vision_analysis else [],
             }
 
-    return asyncio.run(_inner())
+    return _run_async(_inner)
 
 
 def _load_clips_from_db(project_id: str) -> list | None:
@@ -326,7 +347,7 @@ def _load_clips_from_db(project_id: str) -> list | None:
                 for clip in clips
             ]
 
-    return asyncio.run(_inner())
+    return _run_async(_inner)
 
 
 def _persist_transcript_sync(project_id: str, source_path: str, result: dict) -> None:
