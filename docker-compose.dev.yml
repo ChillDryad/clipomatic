@@ -1,9 +1,8 @@
-# Development environment — standalone compose file
-# Ports: 7861 (frontend), 8001 (backend)
+# Development environment — standalone application stack
+# Frontend: http://localhost:7861
 # Workspace: ./workspace-dev
-# Prerequisite: Start shared Ollama first: docker compose -f docker-compose.shared.yml up -d
-# Use with: docker compose -f docker-compose.dev.yml -p momiji-dev --env-file .env.dev up
-# Or: ./scripts/start-dev.sh (runs attached for live logs)
+# LLM access: isolated Ollama on momiji-llm-network (no host port)
+# Use with: ./scripts/start-dev.sh
 
 services:
   momiji-clipper-dev:
@@ -17,9 +16,16 @@ services:
       - WORKSPACE_DIR=/app/workspace
       - WHISPER_MODEL=${WHISPER_MODEL:-small}
       - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
-      - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama-shared:11434/v1}
-      - LLM_API_KEY=${LLM_API_KEY:-ollama}
-      - LLM_MODEL=${LLM_MODEL:-llama3}
+      - LLM_BASE_URL=http://ollama-shared:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=${LLM_MODEL:-gemma3:latest}
+      - HIGHLIGHT_FALLBACK_MODEL=${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
+      - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma3:latest,gemma4:12b}
+      - VISION_MODEL=${VISION_MODEL:-gemma3:latest}
+      - VISION_SCAN_FPS=${VISION_SCAN_FPS:-1}
+      - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-60}
+      - VISION_MAX_FRAMES=${VISION_MAX_FRAMES:-360}
+      - VISION_BATCH_SIZE=${VISION_BATCH_SIZE:-4}
       - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
@@ -28,6 +34,7 @@ services:
     volumes:
       - ./workspace-dev:/app/workspace
     networks:
+      - momiji-dev-net
       - momiji-llm-network
     depends_on:
       redis-dev:
@@ -43,7 +50,7 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - momiji-llm-network
+      - momiji-dev-net
     restart: unless-stopped
 
   celery-worker-dev:
@@ -60,15 +67,23 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis-dev:6379/1
       - WHISPER_MODEL=${WHISPER_MODEL:-small}
       - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
-      - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama-shared:11434/v1}
-      - LLM_API_KEY=${LLM_API_KEY:-ollama}
-      - LLM_MODEL=${LLM_MODEL:-llama3}
+      - LLM_BASE_URL=http://ollama-shared:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=${LLM_MODEL:-gemma3:latest}
+      - HIGHLIGHT_FALLBACK_MODEL=${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
+      - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma3:latest,gemma4:12b}
+      - VISION_MODEL=${VISION_MODEL:-gemma3:latest}
+      - VISION_SCAN_FPS=${VISION_SCAN_FPS:-1}
+      - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-60}
+      - VISION_MAX_FRAMES=${VISION_MAX_FRAMES:-360}
+      - VISION_BATCH_SIZE=${VISION_BATCH_SIZE:-4}
       - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
     volumes:
       - ./workspace-dev:/app/workspace
     networks:
+      - momiji-dev-net
       - momiji-llm-network
     depends_on:
       redis-dev:
@@ -87,10 +102,13 @@ services:
     depends_on:
       - momiji-clipper-dev
     networks:
-      - momiji-llm-network
+      - momiji-dev-net
     restart: unless-stopped
 
 networks:
+  momiji-dev-net:
+    name: momiji-dev-net
+    driver: bridge
   momiji-llm-network:
-    external: true
     name: momiji-llm-network
+    external: true

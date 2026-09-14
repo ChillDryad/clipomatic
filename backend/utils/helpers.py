@@ -397,7 +397,7 @@ async def _regenerate_clip_metadata(clip: dict, transcript: dict) -> dict:
 
     api_key = os.environ.get("LLM_API_KEY", "")
     base_url = os.environ.get("LLM_BASE_URL", "")
-    model = os.environ.get("LLM_MODEL", "llama3.1:8b")
+    model = os.environ.get("LLM_MODEL", "gemma3:latest")
 
     client = OpenAI(api_key=api_key, base_url=base_url)
 
@@ -491,7 +491,7 @@ async def _generate_post_description(clip: dict, transcript: dict) -> str:
 
     api_key = os.environ.get("LLM_API_KEY", "")
     base_url = os.environ.get("LLM_BASE_URL", "")
-    model = os.environ.get("LLM_MODEL", "llama3.1:8b")
+    model = os.environ.get("LLM_MODEL", "gemma3:latest")
 
     client = OpenAI(api_key=api_key, base_url=base_url)
 

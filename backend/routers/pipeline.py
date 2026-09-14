@@ -45,7 +45,7 @@ router = APIRouter(prefix="/api/pipeline", tags=["Pipeline Queue"])
 
 class EnqueueRequest(BaseModel):
     project_id: str
-    steps: list[str] | None = None  # Default: ["transcribe", "highlights"]
+    steps: list[str] | None = None  # Default: ["transcribe", "highlights", "export_segments"]
     config: dict | None = None  # Default: current user preferences
 
 
@@ -108,7 +108,7 @@ async def enqueue_job(
             detail=f"Project status '{project.status}' is not enqueueable. Expected 'loaded', 'transcribed', 'failed', or 'cancelled'.",
         )
 
-    steps = req.steps or ["transcribe", "highlights"]
+    steps = req.steps or ["transcribe", "highlights", "export_segments"]
     # Filter steps based on current state: if already transcribed, skip transcribe
     if project.status == "transcribed" and "transcribe" in steps:
         steps = [s for s in steps if s != "transcribe"]
@@ -513,7 +513,7 @@ def _default_config() -> dict:
     return {
         "whisper_model": os.environ.get("WHISPER_MODEL", "small"),
         "device": os.environ.get("WHISPER_DEVICE", "auto"),
-        "llm_model": os.environ.get("LLM_MODEL", "llama3"),
+        "llm_model": os.environ.get("LLM_MODEL", "gemma3:latest"),
     }
 
 

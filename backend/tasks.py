@@ -203,7 +203,7 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
         transcript=transcript_data,
         api_key=api_key,
         base_url=base_url,
-        model=config.get("llm_model", "llama3"),
+        model=config.get("llm_model", "gemma3:latest"),
         progress_callback=progress_cb,
         timeout_per_chunk=timeout_per_chunk,
         fallback_model=fallback_model,

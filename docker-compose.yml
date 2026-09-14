@@ -36,9 +36,9 @@ services:
       - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
       - LLM_BASE_URL=http://ollama:11434/v1
       - LLM_API_KEY=ollama
-      - LLM_MODEL=${LLM_MODEL:-gemma4:12b}
+      - LLM_MODEL=${LLM_MODEL:-gemma3:latest}
       - HIGHLIGHT_FALLBACK_MODEL=${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
-      - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma4:12b,gemma3:latest}
+      - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma3:latest,gemma4:12b}
       - VISION_MODEL=${VISION_MODEL:-gemma3:latest}
       - VISION_SCAN_FPS=${VISION_SCAN_FPS:-1}
       - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-60}
@@ -90,9 +90,9 @@ services:
       - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
       - LLM_BASE_URL=http://ollama:11434/v1
       - LLM_API_KEY=ollama
-      - LLM_MODEL=${LLM_MODEL:-gemma4:12b}
+      - LLM_MODEL=${LLM_MODEL:-gemma3:latest}
       - HIGHLIGHT_FALLBACK_MODEL=${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
-      - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma4:12b,gemma3:latest}
+      - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma3:latest,gemma4:12b}
       - VISION_MODEL=${VISION_MODEL:-gemma3:latest}
       - VISION_SCAN_FPS=${VISION_SCAN_FPS:-1}
       - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-60}
