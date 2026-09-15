@@ -237,7 +237,23 @@ def transcribe_chunked(
     except Exception as exc:
         logger.warning(f"Audio energy analysis failed (non-fatal): {exc}")
 
-    # Run vision analysis
+    # Save transcript immediately (before vision analysis) so it's cached
+    # even if later steps (vision, highlights) fail or are interrupted
+    result = {
+        "language": detected_language,
+        "language_probability": language_probability,
+        "duration": round(total_duration, 3),
+        "segments": all_segments,
+        "audio_energy": audio_energy,
+        "vision_analysis": [],
+    }
+
+    transcript_path = os.path.join(output_dir, f"{stem}_transcript.json")
+    with open(transcript_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    logger.info("Saved transcript to %s (%d segments)", transcript_path, len(all_segments))
+
+    # Run vision analysis (non-fatal — transcript is already saved)
     vision_data = []
     if video_path and os.path.exists(video_path):
         try:
@@ -264,17 +280,8 @@ def transcribe_chunked(
         except Exception as exc:
             logger.warning(f"Vision analysis failed (non-fatal): {exc}")
 
-    result = {
-        "language": detected_language,
-        "language_probability": language_probability,
-        "duration": round(total_duration, 3),
-        "segments": all_segments,
-        "audio_energy": audio_energy,
-        "vision_analysis": vision_data,
-    }
-
-    # Save transcript
-    transcript_path = os.path.join(output_dir, f"{stem}_transcript.json")
+    # Update transcript with vision data (re-save with vision_analysis populated)
+    result["vision_analysis"] = vision_data
     with open(transcript_path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 
