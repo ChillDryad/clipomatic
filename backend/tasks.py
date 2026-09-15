@@ -152,6 +152,7 @@ def _load_job(job_id: str):
 def _run_transcribe(project_data: dict, config: dict, progress_cb) -> dict:
     """Run the transcribe step."""
     from pipeline import transcription
+    from pipeline.media import get_media_duration
     from utils.helpers import _get_cached_transcript_path
 
     source_path = project_data["source_path"]
@@ -173,12 +174,33 @@ def _run_transcribe(project_data: dict, config: dict, progress_cb) -> dict:
     video_path = source_path if os.path.exists(source_path) else None
     audio_path = source_path if not video_path else None
 
+    # Use chunked transcription for long videos (>1h) to avoid OOM
+    if video_path:
+        try:
+            duration = get_media_duration(video_path)
+            if duration > 3600:  # > 1 hour
+                logger.info("Video is %.1f minutes — using chunked transcription", duration / 60)
+                result = transcription.transcribe_chunked(
+                    video_path=video_path,
+                    output_dir=WORKSPACE,
+                    model_size=config.get("whisper_model", "small"),
+                    device=config.get("device", "auto"),
+                    language="en",  # Force English
+                    chunk_minutes=30.0,
+                    overlap_seconds=30.0,
+                    progress_callback=progress_cb,
+                )
+                _persist_transcript_sync(project_data["id"], source_path, result)
+                return result
+        except Exception as exc:
+            logger.warning("Chunked transcription failed, falling back to full: %s", exc)
+
     result = transcription.transcribe(
         video_path=video_path,
         output_dir=WORKSPACE,
         model_size=config.get("whisper_model", "small"),
         device=config.get("device", "auto"),
-        language=config.get("language"),
+        language="en",  # Force English
         progress_callback=progress_cb,
         audio_path=audio_path,
     )

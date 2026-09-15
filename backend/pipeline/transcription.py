@@ -101,6 +101,195 @@ def _extract_audio(video_path: str, audio_path: str) -> None:
         raise RuntimeError(f"ffmpeg audio extraction failed:\n{result.stderr.strip()}")
 
 
+def transcribe_chunked(
+    video_path: str,
+    output_dir: str,
+    model_size: str = "small",
+    device: str = "auto",
+    language: str = "en",
+    chunk_minutes: float = 30.0,
+    overlap_seconds: float = 30.0,
+    progress_callback: ProgressCallback = None,
+) -> dict:
+    """
+    Transcribe a long video by splitting into overlapping time windows.
+
+    Each chunk is transcribed separately via transcribe_segment(), then
+    segments are merged and deduplicated based on overlap boundaries.
+
+    Args:
+        video_path: Path to the source video file
+        output_dir: Directory to save the final transcript
+        model_size: Whisper model size
+        device: Device to use (auto, cpu, cuda)
+        language: Language code (e.g. "en") — forced for all chunks
+        chunk_minutes: Duration of each chunk in minutes
+        overlap_seconds: Overlap between consecutive chunks for context continuity
+        progress_callback: Optional callback(fraction, label)
+
+    Returns the same dict shape as transcribe():
+    {
+        "language": str,
+        "language_probability": float,
+        "duration": float,
+        "segments": [...],
+        "audio_energy": [...],
+    }
+    """
+    from pipeline.media import get_media_duration
+
+    os.makedirs(output_dir, exist_ok=True)
+    total_duration = get_media_duration(video_path)
+
+    if total_duration <= 0:
+        raise RuntimeError(f"Could not determine video duration for {video_path}")
+
+    chunk_seconds = chunk_minutes * 60.0
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+
+    # Calculate chunk boundaries
+    chunks = []
+    pos = 0.0
+    while pos < total_duration:
+        end = min(pos + chunk_seconds, total_duration)
+        chunks.append((pos, end))
+        pos = end - overlap_seconds
+        if pos >= total_duration - overlap_seconds:
+            break
+
+    logger.info(
+        "Chunked transcription: %.0fs total, %d chunks of %.0fmin (overlap %.0fs)",
+        total_duration, len(chunks), chunk_minutes, overlap_seconds,
+    )
+
+    all_segments = []
+    detected_language = language or "en"
+    language_probability = 1.0
+
+    # Track the end time of the last accepted segment to deduplicate overlap
+    last_accepted_end = 0.0
+
+    for i, (chunk_start, chunk_end) in enumerate(chunks):
+        chunk_label = f"Chunk {i + 1}/{len(chunks)} ({int(chunk_start // 60)}:{int(chunk_start % 60):02d}–{int(chunk_end // 60)}:{int(chunk_end % 60):02d})"
+        base_progress = i / len(chunks)
+        chunk_progress_span = 1.0 / len(chunks)
+
+        _fire(progress_callback, base_progress, f"{chunk_label} — extracting audio…")
+
+        chunk_result = transcribe_segment(
+            video_path=video_path,
+            start=chunk_start,
+            end=chunk_end,
+            model_size=model_size,
+            device=device,
+            language=language,
+            progress_callback=lambda f, l: _fire(
+                progress_callback,
+                base_progress + f * chunk_progress_span * 0.9,
+                f"{chunk_label} — {l}",
+            ),
+        )
+
+        detected_language = chunk_result.get("language", detected_language)
+        language_probability = chunk_result.get("language_probability", language_probability)
+
+        # Deduplicate: only accept segments that start after the last accepted end
+        # (within the overlap region). This prevents duplicate transcriptions.
+        chunk_segments = chunk_result.get("segments", [])
+        new_segments = []
+
+        for seg in chunk_segments:
+            seg_start = seg["start"]
+            # Accept segments that start after the last accepted end minus a small tolerance
+            # The overlap ensures we don't miss segments that span chunk boundaries
+            if seg_start >= last_accepted_end - 1.0:
+                new_segments.append(seg)
+                last_accepted_end = max(last_accepted_end, seg["end"])
+
+        if new_segments:
+            logger.info(
+                "%s: %d segments (%d new after dedup)",
+                chunk_label, len(chunk_segments), len(new_segments),
+            )
+            all_segments.extend(new_segments)
+        else:
+            logger.info("%s: %d segments (all in overlap, skipped)", chunk_label, len(chunk_segments))
+
+        _fire(
+            progress_callback,
+            base_progress + chunk_progress_span * 0.95,
+            f"{chunk_label} — done ({len(all_segments)} total segments)",
+        )
+
+    # Run audio energy analysis on the full video
+    audio_energy = []
+    try:
+        from pipeline.audio import analyze_audio_energy
+        _fire(progress_callback, 0.97, "Analyzing audio energy…")
+        tmp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp_wav.close()
+        try:
+            _extract_audio(video_path, tmp_wav.name)
+            audio_energy = analyze_audio_energy(tmp_wav.name)
+        finally:
+            if os.path.exists(tmp_wav.name):
+                os.unlink(tmp_wav.name)
+    except Exception as exc:
+        logger.warning(f"Audio energy analysis failed (non-fatal): {exc}")
+
+    # Run vision analysis
+    vision_data = []
+    if video_path and os.path.exists(video_path):
+        try:
+            from pipeline.vision import analyze_video_frames
+
+            vision_model = os.environ.get("VISION_MODEL", os.environ.get("LLM_MODEL", "gemma3:latest"))
+            vision_api_key = os.environ.get("LLM_API_KEY", "")
+            vision_base_url = os.environ.get("LLM_BASE_URL", "")
+
+            if vision_api_key and vision_base_url:
+                _fire(progress_callback, 0.98, f"Analyzing video frames with {vision_model}…")
+                vision_data = analyze_video_frames(
+                    video_path=video_path,
+                    output_dir=output_dir,
+                    api_key=vision_api_key,
+                    base_url=vision_base_url,
+                    model=vision_model,
+                    scan_fps=float(os.environ.get("VISION_SCAN_FPS", "1")),
+                    window_seconds=float(os.environ.get("VISION_WINDOW_SECONDS", "60")),
+                    max_frames=int(os.environ.get("VISION_MAX_FRAMES", "360")),
+                    batch_size=int(os.environ.get("VISION_BATCH_SIZE", "4")),
+                    progress_callback=lambda f, l: _fire(progress_callback, 0.98 + f * 0.01, l),
+                )
+        except Exception as exc:
+            logger.warning(f"Vision analysis failed (non-fatal): {exc}")
+
+    result = {
+        "language": detected_language,
+        "language_probability": language_probability,
+        "duration": round(total_duration, 3),
+        "segments": all_segments,
+        "audio_energy": audio_energy,
+        "vision_analysis": vision_data,
+    }
+
+    # Save transcript
+    transcript_path = os.path.join(output_dir, f"{stem}_transcript.json")
+    with open(transcript_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+    # Clean up any leftover chunk files
+    for fname in os.listdir(output_dir):
+        if fname.startswith(stem + "_chunk_") and fname.endswith(".json"):
+            try:
+                os.unlink(os.path.join(output_dir, fname))
+            except OSError:
+                pass
+
+    _fire(progress_callback, 1.0, f"Transcription complete — {len(all_segments)} segments from {len(chunks)} chunks.")
+    return result
+
+
 def transcribe(
     video_path: str | None,
     output_dir: str,
@@ -231,10 +420,13 @@ def transcribe(
             try:
                 from pipeline.vision import analyze_video_frames
 
-                vision_model = os.environ.get("VISION_MODEL", os.environ.get("LLM_MODEL", "llava:13b"))
+                vision_model = os.environ.get("VISION_MODEL", os.environ.get("LLM_MODEL", "gemma3:latest"))
                 vision_api_key = os.environ.get("LLM_API_KEY", "")
                 vision_base_url = os.environ.get("LLM_BASE_URL", "")
-                vision_interval = float(os.environ.get("VISION_SAMPLE_INTERVAL", "30"))
+                vision_scan_fps = float(os.environ.get("VISION_SCAN_FPS", "1"))
+                vision_window_seconds = float(os.environ.get("VISION_WINDOW_SECONDS", "60"))
+                vision_max_frames = int(os.environ.get("VISION_MAX_FRAMES", "360"))
+                vision_batch_size = int(os.environ.get("VISION_BATCH_SIZE", "4"))
 
                 if vision_api_key and vision_base_url:
                     _fire(progress_callback, 0.98, f"Analyzing video frames with {vision_model}…")
@@ -244,7 +436,10 @@ def transcribe(
                         api_key=vision_api_key,
                         base_url=vision_base_url,
                         model=vision_model,
-                        sample_interval=vision_interval,
+                        scan_fps=vision_scan_fps,
+                        window_seconds=vision_window_seconds,
+                        max_frames=vision_max_frames,
+                        batch_size=vision_batch_size,
                         progress_callback=lambda f, l: _fire(progress_callback, 0.98 + f * 0.01, l),
                     )
                     result["vision_analysis"] = vision_data
