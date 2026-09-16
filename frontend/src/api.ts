@@ -1703,6 +1703,81 @@ export async function revokeApiKey(keyId: string): Promise<{ status: string }> {
   return res.json()
 }
 
+export interface AgentPairStartResult {
+  device_code: string
+  user_code: string
+  verification_uri: string
+  verification_uri_complete?: string
+  expires_in: number
+  interval?: number
+}
+
+export interface AgentPairApprovalResult {
+  status: string
+  client_name?: string
+  expires_at?: number
+}
+
+export interface AgentPairExchangeResult extends CreateApiKeyResult {
+  token_type?: string
+}
+
+export interface AgentInfo {
+  name: string
+  version?: string
+  api_base_url?: string
+  capabilities?: string[]
+  pairing_enabled?: boolean
+}
+
+export async function startAgentPairing(clientName: string): Promise<AgentPairStartResult> {
+  const res = await fetch('/api/api-keys/pair/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ client_name: clientName }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function approveAgentPairing(userCode: string): Promise<AgentPairApprovalResult> {
+  const res = await fetch('/api/api-keys/pair/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ user_code: userCode }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function exchangeAgentPairing(deviceCode: string): Promise<AgentPairExchangeResult> {
+  const res = await fetch('/api/api-keys/pair/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ device_code: deviceCode }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function rotateApiKey(keyId: string): Promise<CreateApiKeyResult> {
+  const res = await fetch(`/api/api-keys/${keyId}/rotate`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function getAgentInfo(): Promise<AgentInfo> {
+  const res = await fetch('/api/agent/info', { credentials: 'include' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 export async function listApiKeyScopes(): Promise<{ scopes: string[] }> {
   const res = await fetch('/api/api-keys/scopes', { credentials: 'include' })
   if (!res.ok) throw new Error(await res.text())

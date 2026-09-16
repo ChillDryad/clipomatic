@@ -150,6 +150,16 @@ def _load_job(job_id: str):
 
 
 def _run_transcribe(project_data: dict, config: dict, progress_cb) -> dict:
+    """Run transcription and always release the process-wide Whisper cache."""
+    from pipeline import transcription
+
+    try:
+        return _run_transcribe_impl(project_data, config, progress_cb)
+    finally:
+        transcription.evict_model_cache()
+
+
+def _run_transcribe_impl(project_data: dict, config: dict, progress_cb) -> dict:
     """Run the transcribe step."""
     from pipeline import transcription
     from pipeline.media import get_media_duration

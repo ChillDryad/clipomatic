@@ -1,4 +1,4 @@
-# Base local compose stack. Ollama is private to this stack and cloud routing is disabled.
+# Base local compose stack. Source-quality Clip Studio is the primary workflow.
 # For Nvidia GPU passthrough, layer on the override:
 #   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up --build
 
@@ -8,7 +8,9 @@ services:
     container_name: momiji-ollama
     environment:
       - OLLAMA_NO_CLOUD=1
-      - OLLAMA_KEEP_ALIVE=5m
+      - OLLAMA_KEEP_ALIVE=0
+      - OLLAMA_NUM_PARALLEL=1
+    mem_limit: ${OLLAMA_MEMORY_LIMIT:-9g}
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:
@@ -32,28 +34,33 @@ services:
     env_file: .env
     environment:
       - WORKSPACE_DIR=/app/workspace
+      - RAM_TIER=${RAM_TIER:-standard}
       - WHISPER_MODEL=${WHISPER_MODEL:-small}
       - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
       - LLM_BASE_URL=http://ollama:11434/v1
       - LLM_API_KEY=ollama
       - LLM_MODEL=${LLM_MODEL:-gemma3:latest}
+      - HIGHLIGHT_LLM_BASE_URL=${HIGHLIGHT_LLM_BASE_URL:-http://ollama:11434/v1}
+      - HIGHLIGHT_LLM_API_KEY=${HIGHLIGHT_LLM_API_KEY:-ollama}
+      - HIGHLIGHT_LLM_MODEL=${HIGHLIGHT_LLM_MODEL:-gemma4:12b}
       - HIGHLIGHT_FALLBACK_MODEL=${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
       - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma3:latest,gemma4:12b}
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-8192}
       - VISION_MODEL=${VISION_MODEL:-gemma3:latest}
-      - VISION_SCAN_FPS=${VISION_SCAN_FPS:-1}
-      - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-60}
-      - VISION_MAX_FRAMES=${VISION_MAX_FRAMES:-360}
-      - VISION_BATCH_SIZE=${VISION_BATCH_SIZE:-4}
+      - VISION_SCAN_FPS=${VISION_SCAN_FPS:-0.25}
+      - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-120}
+      - VISION_MAX_FRAMES=${VISION_MAX_FRAMES:-180}
+      - VISION_BATCH_SIZE=${VISION_BATCH_SIZE:-2}
       - DATABASE_URL=${DATABASE_URL}
-      - JWT_SECRET=${JWT_SECRET}
+      - JWT_KEY_DIR=/app/workspace/.keys
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      # Clip Studio settings
       - CLIP_STUDIO_EXPORT_QUALITY=${CLIP_STUDIO_EXPORT_QUALITY:-source}
       - CLIP_STUDIO_EXPORT_FORMAT=${CLIP_STUDIO_EXPORT_FORMAT:-mp4}
       - CLIP_STUDIO_INCLUDE_METADATA=${CLIP_STUDIO_INCLUDE_METADATA:-true}
       - CLIP_STUDIO_GENERATE_EDL=${CLIP_STUDIO_GENERATE_EDL:-false}
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-1g}
     depends_on:
       redis:
         condition: service_healthy
@@ -64,6 +71,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: momiji-redis
+    command: redis-server --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru
+    mem_limit: ${REDIS_MEMORY_LIMIT:-384m}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -78,12 +87,13 @@ services:
       args:
         BASE_IMAGE: python:3.10-slim
     container_name: momiji-celery
-    command: celery -A celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-1}
+    command: celery -A celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-1} --max-tasks-per-child=${CELERY_MAX_TASKS_PER_CHILD:-1} --max-memory-per-child=${CELERY_MAX_MEMORY_KB:-2621440}
     volumes:
       - ./workspace:/app/workspace
     env_file: .env
     environment:
       - WORKSPACE_DIR=/app/workspace
+      - RAM_TIER=${RAM_TIER:-standard}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - WHISPER_MODEL=${WHISPER_MODEL:-small}
@@ -91,21 +101,25 @@ services:
       - LLM_BASE_URL=http://ollama:11434/v1
       - LLM_API_KEY=ollama
       - LLM_MODEL=${LLM_MODEL:-gemma3:latest}
+      - HIGHLIGHT_LLM_BASE_URL=${HIGHLIGHT_LLM_BASE_URL:-http://ollama:11434/v1}
+      - HIGHLIGHT_LLM_API_KEY=${HIGHLIGHT_LLM_API_KEY:-ollama}
+      - HIGHLIGHT_LLM_MODEL=${HIGHLIGHT_LLM_MODEL:-gemma4:12b}
       - HIGHLIGHT_FALLBACK_MODEL=${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
       - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma3:latest,gemma4:12b}
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-8192}
       - VISION_MODEL=${VISION_MODEL:-gemma3:latest}
-      - VISION_SCAN_FPS=${VISION_SCAN_FPS:-1}
-      - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-60}
-      - VISION_MAX_FRAMES=${VISION_MAX_FRAMES:-360}
-      - VISION_BATCH_SIZE=${VISION_BATCH_SIZE:-4}
+      - VISION_SCAN_FPS=${VISION_SCAN_FPS:-0.25}
+      - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-120}
+      - VISION_MAX_FRAMES=${VISION_MAX_FRAMES:-180}
+      - VISION_BATCH_SIZE=${VISION_BATCH_SIZE:-2}
       - DATABASE_URL=${DATABASE_URL}
-      - JWT_SECRET=${JWT_SECRET}
+      - JWT_KEY_DIR=/app/workspace/.keys
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
-      # Clip Studio settings
       - CLIP_STUDIO_EXPORT_QUALITY=${CLIP_STUDIO_EXPORT_QUALITY:-source}
       - CLIP_STUDIO_EXPORT_FORMAT=${CLIP_STUDIO_EXPORT_FORMAT:-mp4}
       - CLIP_STUDIO_INCLUDE_METADATA=${CLIP_STUDIO_INCLUDE_METADATA:-true}
       - CLIP_STUDIO_GENERATE_EDL=${CLIP_STUDIO_GENERATE_EDL:-false}
+    mem_limit: ${CELERY_MEMORY_LIMIT:-3g}
     depends_on:
       redis:
         condition: service_healthy
@@ -118,6 +132,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: momiji-frontend
+    mem_limit: ${FRONTEND_MEMORY_LIMIT:-128m}
     ports:
       - "7860:80"
     depends_on:

@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select
 
 from db import VideoProject, User, get_session_cm
-from auth import get_current_user
+from auth import get_current_user_or_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def _thumbnail_path(project_id: str) -> str:
 async def upload_thumbnail(
     project_id: str,
     file: UploadFile = File(...),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
 ):
     """Upload a thumbnail image for a project."""
     os.makedirs(THUMBNAILS_DIR, exist_ok=True)
@@ -96,7 +96,7 @@ async def upload_thumbnail(
 @router.delete("/{project_id}/thumbnail")
 async def delete_thumbnail(
     project_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove the thumbnail for a project."""
     removed = _remove_existing_thumbnail(project_id)
@@ -115,7 +115,7 @@ async def delete_thumbnail(
 @router.post("/{project_id}/thumbnail/auto-generate")
 async def auto_generate_thumbnail(
     project_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
 ):
     """Auto-generate a thumbnail from YouTube (if URL source) or extract a video frame."""
     os.makedirs(THUMBNAILS_DIR, exist_ok=True)
@@ -195,7 +195,7 @@ async def auto_generate_thumbnail(
 @router.get("/{project_id}/thumbnail")
 async def get_thumbnail(
     project_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
 ):
     """Serve the thumbnail image for a project."""
     thumb_path = _thumbnail_path(project_id)
@@ -214,7 +214,7 @@ async def get_thumbnail(
 @router.get("/{project_id}/thumbnail/status")
 async def thumbnail_status(
     project_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
 ):
     """Check if a thumbnail exists for a project."""
     thumb_path = _thumbnail_path(project_id)

@@ -350,82 +350,96 @@ def analyze_audio_energy(
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-    info = _get_audio_info(audio_path)
-    duration = info["duration"]
-    sample_rate = info["sample_rate"]
+    duration = _get_audio_info(audio_path)["duration"]
 
-    # Extract to mono f32le PCM at 16kHz (fast, sufficient for energy analysis)
-    temp_fd, temp_path = tempfile.mkstemp(suffix=".f32")
+    # Stream mono f32le PCM directly from ffmpeg. Keeping only one analysis
+    # segment in memory bounds usage independently of source duration.
+    cmd = [
+        "ffmpeg", "-loglevel", "error", "-i", audio_path,
+        "-acodec", "pcm_f32le",
+        "-ar", "16000",
+        "-ac", "1",
+        "-f", "f32le",
+        "-",
+    ]
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if process.stdout is None:
+        raise RuntimeError("FFmpeg PCM stream was not created")
+
+    import math
+    import struct
+
+    samples_per_segment = int(16000 * segment_duration)
+    if samples_per_segment <= 0:
+        process.kill()
+        process.wait()
+        raise ValueError("segment_duration must produce at least one sample")
+    block_size = samples_per_segment * 4
+    segments: list[dict] = []
+    sample_offset = 0
+
     try:
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", audio_path,
-            "-acodec", "pcm_f32le",
-            "-ar", "16000",
-            "-ac", "1",
-            "-f", "f32le",
-            temp_path,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"FFmpeg extraction failed: {result.stderr.strip()}")
-
-        with open(temp_path, "rb") as f:
-            raw_data = f.read()
-
-        import struct
-        import math
-
-        samples_per_segment = int(16000 * segment_duration)
-        total_samples = len(raw_data) // 4
-
-        if total_samples == 0:
-            return []
-
-        segments: list[dict] = []
-        for seg_idx in range(0, total_samples, samples_per_segment):
-            chunk_bytes = raw_data[seg_idx * 4 : (seg_idx + samples_per_segment) * 4]
-            if len(chunk_bytes) < 4:
+        while True:
+            chunk = bytearray()
+            while len(chunk) < block_size:
+                data = process.stdout.read(block_size - len(chunk))
+                if not data:
+                    break
+                chunk.extend(data)
+            if len(chunk) < 4:
                 break
 
-            samples = struct.unpack(f"{len(chunk_bytes) // 4}f", chunk_bytes)
-            if not samples:
-                continue
-
-            peak = max(abs(s) for s in samples)
-            sum_squares = sum(s * s for s in samples)
+            # Ignore an incomplete trailing float, if ffmpeg ever emits one.
+            complete_bytes = len(chunk) - (len(chunk) % 4)
+            samples = struct.unpack(
+                f"{complete_bytes // 4}f", chunk[:complete_bytes]
+            )
+            peak = max(abs(sample) for sample in samples)
+            sum_squares = sum(sample * sample for sample in samples)
             rms = math.sqrt(sum_squares / len(samples))
-            silent_count = sum(1 for s in samples if abs(s) < silence_threshold)
-            silence_ratio = silent_count / len(samples)
+            silent_count = sum(
+                1 for sample in samples if abs(sample) < silence_threshold
+            )
 
-            seg_start = (seg_idx / 16000)
-            seg_end = seg_start + segment_duration
-
+            seg_start = sample_offset / 16000
+            seg_end = seg_start + len(samples) / 16000
             segments.append({
                 "start": round(seg_start, 3),
                 "end": round(min(seg_end, duration), 3),
                 "peak": round(peak, 4),
                 "rms": round(rms, 4),
-                "silence_ratio": round(silence_ratio, 4),
-                "is_spike": False,  # set in second pass
+                "silence_ratio": round(silent_count / len(samples), 4),
+                "is_spike": False,
             })
+            sample_offset += len(samples)
 
-        # Second pass: flag spikes where peak > spike_threshold * rolling_mean
-        window_segments = int(spike_window / segment_duration)
-        for i, seg in enumerate(segments):
-            lo = max(0, i - window_segments)
-            hi = min(len(segments), i + window_segments + 1)
-            window_peaks = [segments[j]["peak"] for j in range(lo, hi)]
-            if window_peaks:
-                rolling_mean = sum(window_peaks) / len(window_peaks)
-                if rolling_mean > 0 and seg["peak"] > spike_threshold * rolling_mean:
-                    seg["is_spike"] = True
-
-        return segments
-
+            if len(chunk) < block_size:
+                break
     finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        process.stdout.close()
+
+    returncode = process.wait()
+    if returncode != 0:
+        stderr = process.stderr.read() if process.stderr is not None else b""
+        detail = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"FFmpeg extraction failed: {detail}")
+
+    # Preserve the original symmetric rolling-mean spike detection behavior.
+    window_segments = int(spike_window / segment_duration)
+    for i, seg in enumerate(segments):
+        lo = max(0, i - window_segments)
+        hi = min(len(segments), i + window_segments + 1)
+        window_peaks = [segments[j]["peak"] for j in range(lo, hi)]
+        if window_peaks:
+            rolling_mean = sum(window_peaks) / len(window_peaks)
+            if rolling_mean > 0 and seg["peak"] > spike_threshold * rolling_mean:
+                seg["is_spike"] = True
+
+    return segments
 
 
 def _generate_waveform_image(peaks: list[float], output_path: str, width: int = 1000, height: int = 200):

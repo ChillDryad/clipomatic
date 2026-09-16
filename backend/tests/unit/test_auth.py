@@ -11,7 +11,7 @@ Tests cover:
 import os
 import time
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import jwt
 import pytest

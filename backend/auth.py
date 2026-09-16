@@ -340,6 +340,36 @@ def decode_access_token(token: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+_API_SCOPE_RULES: tuple[tuple[str, set[str]], ...] = (
+    ("/api/pipeline/clip-studio", {"pipeline", "clip-studio"}),
+    ("/api/api-keys", {"api-keys"}),
+    ("/api/api-keys/device-code", {"api-keys"}),  # device code endpoints accept api-keys scope
+    ("/api/auth/me", {"agent"}),
+    ("/api/models", {"agent"}),
+    ("/api/agent", {"agent"}),
+    ("/api/thumbnails", {"projects"}),
+    ("/api/transcribe", {"transcribe"}),
+    ("/api/highlights", {"highlights"}),
+    ("/api/pipeline", {"pipeline"}),
+    ("/api/projects", {"projects"}),
+    ("/api/ingest", {"ingest"}),
+    ("/api/clips", {"clips"}),
+    ("/api/render", {"render"}),
+    ("/api/timeline", {"render"}),
+    ("/api/media", {"render"}),
+    ("/api/markers", {"render"}),
+)
+
+
+def required_api_key_scopes(path: str) -> set[str]:
+    """Return accepted scopes for an API path, denying unknown API routes."""
+    normalized = "/" + path.strip("/")
+    for prefix, scopes in _API_SCOPE_RULES:
+        if normalized == prefix or normalized.startswith(prefix + "/"):
+            return set(scopes)
+    raise HTTPException(status_code=403, detail="API key access is not allowed for this endpoint")
+
+
 async def get_current_user(
     access_token: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_session),
@@ -403,37 +433,18 @@ async def get_current_user_or_api_key(
                 # Update last_used_at (fire and forget — don't block the request)
                 candidate.last_used_at = _time.time()
 
-                # Scope check: verify the requested endpoint is allowed
-                if candidate.scopes:
-                    scopes = _json.loads(candidate.scopes)
-                    # Derive scope from the request path: /api/pipeline/... -> "pipeline"
-                    path_parts = request.url.path.strip("/").split("/")
-                    if len(path_parts) >= 2 and path_parts[0] == "api":
-                        endpoint_scope = path_parts[1]
-                        # Map some router prefixes to scope names
-                        scope_map = {
-                            "render": "render",
-                            "timeline": "render",
-                            "media": "render",
-                            "markers": "render",
-                        }
-                        required_scope = scope_map.get(endpoint_scope, endpoint_scope)
-                        # Special case: /api/pipeline/clip-studio/* can be accessed
-                        # with either "pipeline" or "clip-studio" scope
-                        if (endpoint_scope == "pipeline"
-                                and len(path_parts) >= 3
-                                and path_parts[2] == "clip-studio"):
-                            if "clip-studio" not in scopes and "pipeline" not in scopes:
-                                raise HTTPException(
-                                    status_code=403,
-                                    detail="API key lacks scope: clip-studio or pipeline",
-                                )
-                        elif required_scope not in scopes:
-                            raise HTTPException(
-                                status_code=403,
-                                detail=f"API key lacks scope: {required_scope}",
-                            )
+                # Scope check is fail-closed and uses explicit path mappings.
+                scopes = _json.loads(candidate.scopes) if candidate.scopes else []
+                required_scopes = required_api_key_scopes(request.url.path)
+                if not required_scopes.intersection(scopes):
+                    required = " or ".join(sorted(required_scopes))
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"API key lacks scope: {required}",
+                    )
 
+                request.state.api_key = candidate
+                request.state.api_key_scopes = scopes
                 return user
 
         raise HTTPException(status_code=401, detail="Invalid API key")

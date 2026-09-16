@@ -46,11 +46,11 @@ export function HomePage() {
             to={
               urlInput
                 ? `/pipeline?url=${encodeURIComponent(urlInput)}`
-                : "/pipeline"
+                : "/clip-studio"
             }
             className="btn-momiji-primary px-6 py-3 rounded-lg whitespace-nowrap min-h-[44px] flex items-center justify-center"
           >
-            Start Pipeline
+            {urlInput ? 'Import source for Clip Studio' : 'Open Clip Studio'}
           </Link>
         </div>
       </div>
@@ -103,11 +103,11 @@ export function HomePage() {
               Upload a VOD to start growing your momiji moments 🍁
             </p>
             <div className="mt-6">
-              <Link to="/pipeline" className="btn-momiji-primary">
+              <Link to="/clip-studio" className="btn-momiji-primary">
                 <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                 </svg>
-                Upload Video
+                Open Clip Studio
               </Link>
             </div>
           </div>
@@ -122,7 +122,7 @@ export function HomePage() {
 
       {/* Quick Links */}
       <nav className="flex gap-2 flex-wrap" aria-label="Quick links">
-        <Link to="/pipeline" className="btn-secondary">
+        <Link to="/clip-studio" className="btn-secondary">
           New Project
         </Link>
         <Link to="/schedule" className="btn-secondary">

@@ -89,9 +89,9 @@ export function Navbar() {
 
           {/* New Project */}
           <Link
-            to="/pipeline"
+            to="/clip-studio"
             className="btn-momiji-primary text-sm"
-            title="New Project"
+            title="New source-quality project"
           >
             New Project
           </Link>

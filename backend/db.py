@@ -592,6 +592,23 @@ class ApiKey(Base):
 
     user: Mapped[User] = relationship()
 
+class DeviceCodePairing(Base):
+    """Short-lived, single-use agent pairing request with hashed codes."""
+    __tablename__ = "device_code_pairings"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: uuid.uuid4().hex)
+    device_code_hash: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    user_code_hash: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    requested_scopes: Mapped[str] = mapped_column(Text, nullable=False)
+    approved_scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True, index=True)
+    expires_at: Mapped[float] = mapped_column(Float, nullable=False)
+    approved_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    consumed_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
+
+
 # ---------------------------------------------------------------------------
 # Clip Studio Queue Models (Source Quality Export)
 # ---------------------------------------------------------------------------

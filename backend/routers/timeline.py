@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from db import User
-from auth import get_current_user
+from auth import get_current_user, get_current_user_or_api_key
 from pipeline import ingestion
 from utils.helpers import _validate_workspace_path
 from utils.sse import _sse_event, _sse_response, _sse_stream
@@ -47,7 +47,10 @@ class BatchEditResponse(BaseModel):
 
 
 @router.post("/batch")
-async def batch_edit(req: BatchEditRequest):
+async def batch_edit(
+    req: BatchEditRequest,
+    user: User = Depends(get_current_user_or_api_key),
+):
     """
     Execute multiple timeline operations atomically.
     Operations are validated but not persisted server-side.
@@ -140,7 +143,7 @@ class RenderTimelineRequest(BaseModel):
 
 
 @render_router.post("/clip")
-async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_current_user)):
+async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_current_user_or_api_key)):
     """Render a clip to 9:16 vertical MP4 with subtitles. SSE: single done event."""
     from pipeline.renderer import render_clip, CropBox, ZoomEffect
     from pipeline.silence_removal import detect_keep_segments
@@ -229,7 +232,7 @@ async def render_clip_endpoint(req: RenderClipRequest, user: User = Depends(get_
 
 
 @render_router.post("/segment")
-async def render_segment_endpoint(req: RenderSegmentRequest, user: User = Depends(get_current_user)):
+async def render_segment_endpoint(req: RenderSegmentRequest, user: User = Depends(get_current_user_or_api_key)):
     """Download a specific time segment of a VOD with SSE progress."""
     renders_dir = os.path.join(WORKSPACE, "renders")
     return _sse_response(
@@ -238,7 +241,7 @@ async def render_segment_endpoint(req: RenderSegmentRequest, user: User = Depend
 
 
 @render_router.post("/timeline")
-async def render_timeline_endpoint(req: RenderTimelineRequest, user: User = Depends(get_current_user)):
+async def render_timeline_endpoint(req: RenderTimelineRequest, user: User = Depends(get_current_user_or_api_key)):
     """Render full timeline with all tracks, overlays, and effects."""
     from pipeline.renderer import render_timeline, CropBox, ZoomEffect
 
@@ -281,7 +284,7 @@ async def render_timeline_endpoint(req: RenderTimelineRequest, user: User = Depe
 
 
 @render_router.post("/preview")
-async def render_preview_endpoint(req: RenderClipRequest, user: User = Depends(get_current_user)):
+async def render_preview_endpoint(req: RenderClipRequest, user: User = Depends(get_current_user_or_api_key)):
     """Render a low-res preview of a clip. Identical layout to final render, half resolution, fast encode.
 
     SSE: single done event. Cached: identical params return cached preview instantly.

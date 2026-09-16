@@ -13,7 +13,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from db import User, VideoProject, GeneratedClip, get_session_cm
-from auth import get_current_user
+from auth import get_current_user_or_api_key
 from pipeline import highlight_detection
 from utils.sse import _sse_response, _sse_stream
 from utils.helpers import _clips_cache_path, _update_project_status
@@ -34,7 +34,10 @@ class HighlightsRequest(BaseModel):
 
 
 @router.post("")
-async def highlights(req: HighlightsRequest):
+async def highlights(
+    req: HighlightsRequest,
+    user: User = Depends(get_current_user_or_api_key),
+):
     """Detect viral clip candidates using the configured LLM. SSE: progress events + final done."""
     api_key = os.environ.get("LLM_API_KEY", "")
     base_url = os.environ.get("LLM_BASE_URL", "")
@@ -47,7 +50,7 @@ async def highlights(req: HighlightsRequest):
         # Timeout per chunk: 5 minutes (300s) default, adjust based on hardware
         timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "300"))
         # Fallback model when primary times out (smaller = faster)
-        fallback_model = os.environ.get("HIGHLIGHT_FALLBACK_MODEL", "phi3:mini")
+        fallback_model = os.environ.get("HIGHLIGHT_FALLBACK_MODEL", "gemma3:latest")
 
         async for event_str in _sse_stream(
             highlight_detection.detect_highlights,
@@ -113,7 +116,7 @@ async def highlights(req: HighlightsRequest):
 
 
 @router.get("/cached")
-async def highlights_cached(path: str = Query(...), user: User = Depends(get_current_user)):
+async def highlights_cached(path: str = Query(...), user: User = Depends(get_current_user_or_api_key)):
     """Return cached clips JSON for a given source path, or 404."""
     cache_path = _clips_cache_path(path)
     if not os.path.exists(cache_path):
@@ -128,7 +131,7 @@ class SaveClipsRequest(BaseModel):
 
 
 @router.post("/save-cached")
-async def save_cached_clips(req: SaveClipsRequest, user: User = Depends(get_current_user)):
+async def save_cached_clips(req: SaveClipsRequest, user: User = Depends(get_current_user_or_api_key)):
     """
     Save cached clips to the database for a project.
     Use this when user accepts cached clip data from a file.

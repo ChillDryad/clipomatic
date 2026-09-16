@@ -4,6 +4,7 @@ import { Select } from '../ui/Select'
 import { useTheme } from '../../hooks/useTheme'
 import { usePipeline } from '../../context/PipelineContext'
 import { fetchModels, saveConfig } from '../../api'
+import { Link } from 'react-router-dom'
 
 const WHISPER_MODELS = [
   { value: 'tiny', label: 'tiny — fastest, lowest accuracy' },
@@ -121,6 +122,16 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               />
             </label>
           )}
+        </div>
+
+        <div className="pt-4 border-t border-[var(--ctp-overlay)]">
+          <Link
+            to="/settings"
+            onClick={onClose}
+            className="btn-secondary w-full inline-flex items-center justify-center text-sm"
+          >
+            User settings &amp; Agent Access
+          </Link>
         </div>
       </div>
     </Modal>

@@ -16,7 +16,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 
 from db import User, get_session_cm
-from auth import get_current_user
+from auth import get_current_user_or_api_key
 from utils.helpers import _clips_cache_path, _parse_clip_key, _regenerate_clip_metadata, _generate_post_description
 from pydantic import BaseModel
 
@@ -63,7 +63,11 @@ class DetectSilenceRequest(BaseModel):
 
 
 @router.patch("/{clip_key}")
-async def patch_clip(clip_key: str, req: ClipPatchRequest):
+async def patch_clip(
+    clip_key: str,
+    req: ClipPatchRequest,
+    user: User = Depends(get_current_user_or_api_key),
+):
     """Partially update a clip's metadata in the cached clips JSON file."""
     source_path, index = _parse_clip_key(clip_key)
     cache_path = _clips_cache_path(source_path)
@@ -95,7 +99,7 @@ async def patch_clip(clip_key: str, req: ClipPatchRequest):
 
 
 @router.get("/{clip_key}")
-async def get_clip(clip_key: str, user: User = Depends(get_current_user)):
+async def get_clip(clip_key: str, user: User = Depends(get_current_user_or_api_key)):
     """Return a single clip from the cache by clip_key."""
     source_path, index = _parse_clip_key(clip_key)
     cache_path = _clips_cache_path(source_path)
@@ -113,7 +117,7 @@ async def get_clip(clip_key: str, user: User = Depends(get_current_user)):
 
 
 @router.post("/{clip_key}/regenerate-metadata")
-async def regenerate_clip_metadata_endpoint(clip_key: str, req: RegenerateMetadataRequest, user: User = Depends(get_current_user)):
+async def regenerate_clip_metadata_endpoint(clip_key: str, req: RegenerateMetadataRequest, user: User = Depends(get_current_user_or_api_key)):
     """Regenerate title and hashtags for a clip using the LLM."""
     source_path, index = _parse_clip_key(clip_key)
     cache_path = _clips_cache_path(source_path)
@@ -141,7 +145,7 @@ async def regenerate_clip_metadata_endpoint(clip_key: str, req: RegenerateMetada
 
 
 @router.post("/{clip_key}/generate-post-description")
-async def generate_post_description_endpoint(clip_key: str, req: GeneratePostDescriptionRequest, user: User = Depends(get_current_user)):
+async def generate_post_description_endpoint(clip_key: str, req: GeneratePostDescriptionRequest, user: User = Depends(get_current_user_or_api_key)):
     """Generate a social media post description based on the clip transcript."""
     source_path, index = _parse_clip_key(clip_key)
     cache_path = _clips_cache_path(source_path)
@@ -161,7 +165,7 @@ async def generate_post_description_endpoint(clip_key: str, req: GeneratePostDes
 
 
 @router.post("/{clip_key}/suggest-sfx")
-async def suggest_sfx_endpoint(clip_key: str, req: SuggestSfxRequest, user: User = Depends(get_current_user)):
+async def suggest_sfx_endpoint(clip_key: str, req: SuggestSfxRequest, user: User = Depends(get_current_user_or_api_key)):
     """Suggest SFX placements based on clip metadata, audio energy, and zoom settings."""
     from pipeline.sfx import suggest_sfx_placements, list_available_sfx
     from pipeline.renderer import ZoomEffect
@@ -188,7 +192,7 @@ async def suggest_sfx_endpoint(clip_key: str, req: SuggestSfxRequest, user: User
 
 
 @router.post("/{clip_key}/detect-silence")
-async def detect_silence_endpoint(clip_key: str, req: DetectSilenceRequest, user: User = Depends(get_current_user)):
+async def detect_silence_endpoint(clip_key: str, req: DetectSilenceRequest, user: User = Depends(get_current_user_or_api_key)):
     """Detect silent gaps in a clip and return the segments that would be kept after removal."""
     from pipeline.silence_removal import detect_keep_segments
 

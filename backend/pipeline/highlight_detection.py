@@ -338,7 +338,15 @@ def _parse_clips(raw: str) -> list[dict]:
     )
 
 
-def _chat(client, model: str, system: str, messages: list[dict], temperature: float = 0.4, timeout: float = 300.0) -> str:
+def _chat(
+    client,
+    model: str,
+    system: str,
+    messages: list[dict],
+    temperature: float = 0.4,
+    timeout: float = 300.0,
+    num_ctx: int = 8192,
+) -> str:
     """
     Send a chat request, falling back if json_object response_format is unsupported.
 
@@ -355,6 +363,7 @@ def _chat(client, model: str, system: str, messages: list[dict], temperature: fl
         messages=[{"role": "system", "content": system}] + messages,
         temperature=temperature,
         timeout=timeout,
+        extra_body={"num_ctx": num_ctx},
     )
     try:
         resp = client.chat.completions.create(**kwargs, response_format={"type": "json_object"})
@@ -479,6 +488,8 @@ def detect_highlights(
     fallback_model: str = _FALLBACK_MODEL,
     audio_energy: list[dict] | None = None,
     vision_data: list[dict] | None = None,
+    max_chunk_chars: int = _MAX_CHUNK_CHARS,
+    num_ctx: int = 8192,
 ) -> list[dict]:
     """
     Single-turn approach optimized for Gemma4 with automatic fallback.
@@ -513,7 +524,7 @@ def detect_highlights(
             progress_callback(fraction, label)
 
     flat_text = transcript_to_text(transcript)
-    chunks = _chunk_transcript(flat_text)
+    chunks = _chunk_transcript(flat_text, max_chars=max_chunk_chars)
 
     # Build audio energy annotations if available
     word_density = compute_word_density(transcript) if audio_energy else None
@@ -558,7 +569,7 @@ def detect_highlights(
 
         try:
             answer = _chat(client, model, system_prompt, [{"role": "user", "content": user_message}],
-                          temperature=0.7, timeout=timeout_per_chunk)
+                          temperature=0.7, timeout=timeout_per_chunk, num_ctx=num_ctx)
             clips = _parse_clips(answer)
             if clips:
                 all_clips.extend(clips)
@@ -578,7 +589,7 @@ def detect_highlights(
         try:
             _cb(base_progress + 0.05, f"{chunk_label} — retrying with {fallback_model}…")
             answer = _chat(client, fallback_model, system_prompt, [{"role": "user", "content": user_message}],
-                          temperature=0.7, timeout=timeout_per_chunk)
+                          temperature=0.7, timeout=timeout_per_chunk, num_ctx=num_ctx)
             clips = _parse_clips(answer)
             if clips:
                 all_clips.extend(clips)

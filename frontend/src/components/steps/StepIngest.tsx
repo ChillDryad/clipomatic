@@ -257,7 +257,8 @@ export function StepIngest() {
     setVideoTitle(null)
     try {
       const controller = getAbortController('twitch-stream')
-      const result = await streamTwitchAudio(twitchInput.trim(), prog, controller.signal)
+      // Use full video download (not audio-only) so vision analysis can sample frames
+      const result = await downloadUrl(twitchInput.trim(), prog, controller.signal)
       setProgress(null)
 
       // Check if server detected a duplicate
@@ -268,16 +269,16 @@ export function StepIngest() {
 
       // Auto-name from VOD title
       const displayName = result.videoTitle || `Twitch VOD ${twitchInput.split('/').pop()}`
-      const audioPath = result.audioPath
-      if (!audioPath) throw new Error('No audio path returned from server')
+      const videoPath = result.videoPath
+      if (!videoPath) throw new Error('No video path returned from server')
       if (result.projectId) {
-        // Use project already created by backend during stream
+        // Use project already created by backend during download
         setProjectId(result.projectId)
       } else {
-        const project = await handleCreateProject(audioPath, displayName, twitchInput.trim(), result.duration ?? null)
+        const project = await handleCreateProject(videoPath, displayName, twitchInput.trim(), result.duration ?? null)
         setProjectId(project.id)
       }
-      setSource({ videoPath: null, audioPath, twitchUrl: twitchInput.trim(), videoUrl: null }, null)
+      setSource({ videoPath, audioPath: null, twitchUrl: twitchInput.trim(), videoUrl: twitchInput.trim() }, null)
     } catch (err) {
       setProgress(null)
       if (String(err).includes('cancelled')) {
@@ -404,7 +405,7 @@ export function StepIngest() {
       {tab === 'twitch' && (
         <div className="space-y-3">
           <p className="text-xs text-[var(--ctp-subtext)]">
-            Streams only the audio — no video stored. Clips are downloaded on demand.
+            Downloads the full video for vision analysis, transcription, and clip rendering.
           </p>
           <input
             type="url"
@@ -432,7 +433,7 @@ export function StepIngest() {
                   disabled={!!progress}
                   className="btn-secondary text-sm py-1"
                 >
-                  Re-stream &amp; re-transcribe
+                  Re-download &amp; re-transcribe
                 </button>
               </div>
             </div>
@@ -444,7 +445,7 @@ export function StepIngest() {
               disabled={!!progress || !twitchInput.trim()}
               className="btn-primary"
             >
-              Stream Audio
+              Download Video
             </button>
           )}
         </div>
@@ -580,7 +581,7 @@ export function StepIngest() {
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
-                  Retry stream
+                  Retry download
                 </button>
               )}
             </div>

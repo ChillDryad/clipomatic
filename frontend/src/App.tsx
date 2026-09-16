@@ -14,6 +14,7 @@ import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { TeamListPage } from './pages/TeamListPage'
 import { TeamDetailPage } from './pages/TeamDetailPage'
+import { UserSettingsPage } from './pages/UserSettingsPage'
 import { useAuth } from './hooks/useAuth'
 
 // Protected route wrapper - redirects to login if not authenticated
@@ -84,7 +85,7 @@ export default function App() {
               path="/"
               element={
                 <ProtectedRoute>
-                  <Navigate to="/dashboard" replace />
+                  <Navigate to="/clip-studio" replace />
                 </ProtectedRoute>
               }
             />
@@ -144,6 +145,16 @@ export default function App() {
                 <ProtectedRoute>
                   <PageLayout>
                     <ClipStudioPage />
+                  </PageLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <ProtectedRoute>
+                  <PageLayout>
+                    <UserSettingsPage />
                   </PageLayout>
                 </ProtectedRoute>
               }

@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from db import User, UserOAuthAccount, VideoProject, get_session_cm
-from auth import decrypt_oauth_token, get_current_user
+from auth import decrypt_oauth_token, get_current_user_or_api_key
 from pipeline import ingestion
 from pipeline.ingestion import extract_vod_id
 from oauth.twitch import get_user_vods
@@ -62,7 +62,7 @@ async def ingest_upload(
     request: Request,
     file: UploadFile = File(...),
     name: str = Form(...),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
 ):
     """
     Save an uploaded video file to the workspace, streaming to disk in chunks.
@@ -184,7 +184,7 @@ async def ingest_upload(
 
 
 @router.post("/url")
-async def ingest_url(req: UrlRequest, user: User = Depends(get_current_user)):
+async def ingest_url(req: UrlRequest, user: User = Depends(get_current_user_or_api_key)):
     """
     Download a video from any yt-dlp-supported URL with SSE progress.
     Creates a VideoProject on success with status='loaded'.
@@ -258,7 +258,7 @@ async def ingest_url(req: UrlRequest, user: User = Depends(get_current_user)):
 
 
 @router.post("/twitch/stream")
-async def ingest_twitch_stream(req: UrlRequest, user: User = Depends(get_current_user)):
+async def ingest_twitch_stream(req: UrlRequest, user: User = Depends(get_current_user_or_api_key)):
     """
     Stream only the audio from a Twitch VOD with SSE progress.
     Creates a VideoProject on success with status='loaded'.
@@ -335,7 +335,7 @@ async def ingest_twitch_stream(req: UrlRequest, user: User = Depends(get_current
 
 
 @router.get("/twitch/check")
-async def ingest_twitch_check(url: str = Query(...), user: User = Depends(get_current_user)):
+async def ingest_twitch_check(url: str = Query(...), user: User = Depends(get_current_user_or_api_key)):
     """Check whether a transcript already exists for a Twitch VOD URL."""
     try:
         vod_id = extract_vod_id(url)
@@ -357,7 +357,7 @@ async def ingest_twitch_check(url: str = Query(...), user: User = Depends(get_cu
 
 
 @router.get("/twitch/vods")
-async def list_twitch_vods(user: User = Depends(get_current_user)):
+async def list_twitch_vods(user: User = Depends(get_current_user_or_api_key)):
     """Fetch the authenticated user's Twitch VODs using their stored OAuth token."""
     async with get_session_cm() as session:
         result = await session.execute(
@@ -379,7 +379,7 @@ async def list_twitch_vods(user: User = Depends(get_current_user)):
 
 
 @router.get("/check/{path:path}")
-async def check_ingest_state(path: str, user: User = Depends(get_current_user)):
+async def check_ingest_state(path: str, user: User = Depends(get_current_user_or_api_key)):
     """
     Check the ingestion state for a given source path.
     Returns whether video/audio file exists, and if transcript/clips are cached.

@@ -21,6 +21,7 @@ from sqlalchemy import select
 from db import User, UserOAuthAccount, get_session_cm
 from auth import (
     get_current_user,
+    get_current_user_or_api_key,
     hash_password,
     verify_password,
     validate_password_strength,
@@ -114,7 +115,7 @@ async def login(request: Request, req: LoginRequest, response: Response):
 
 
 @router.get("/me")
-async def get_current_user_profile(user: User = Depends(get_current_user)):
+async def get_current_user_profile(user: User = Depends(get_current_user_or_api_key)):
     """Get current authenticated user profile."""
     return {**_user_dict(user), "created_at": user.created_at}
 

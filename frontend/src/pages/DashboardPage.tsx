@@ -73,7 +73,7 @@ export function DashboardPage() {
           </div>
           <div className="flex items-center gap-3">
             <Link
-              to="/pipeline"
+              to="/clip-studio"
               className="btn-primary inline-flex items-center gap-2"
             >
               <svg

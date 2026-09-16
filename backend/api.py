@@ -246,6 +246,8 @@ from routers import (
     oauth_router,
     teams_router,
     thumbnails_router,
+    api_keys_router,
+    agent_router,
 )
 from routers.pipeline import router as pipeline_router
 
@@ -265,6 +267,8 @@ app.include_router(oauth_router)
 app.include_router(teams_router)
 app.include_router(thumbnails_router)
 app.include_router(pipeline_router)
+app.include_router(api_keys_router)
+app.include_router(agent_router)
 
 
 # ---------------------------------------------------------------------------

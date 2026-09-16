@@ -1,78 +1,63 @@
 # Momiji Clipper 🍁
 
-Self-hosted AI clip factory for VTuber VODs. Transcribes with GPU-accelerated Whisper, identifies viral moments with an LLM, and renders 9:16 vertical clips with a stacked layout and karaoke-style word-highlight subtitles.
+Self-hosted clip extraction pipeline for VTuber VODs. Transcribes with Whisper, identifies viral moments with an LLM, and exports clips at **source quality** — no re-encoding, no burned-in subtitles.
 
-## Prerequisites
+## Architecture
 
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- [Ollama](https://ollama.com/) (bundled in the compose — no separate install needed)
-- For Nvidia GPU: `nvidia-container-toolkit` installed on the host
+```
+Video URL/Upload → Ingest → Chunked Transcription → LLM Highlight Detection → Source Quality Export
+                                                                             ↓
+                                                                    Clip Studio Queue
+                                                                    (batch processing)
+```
+
+**Clip Studio mode** is the default: process videos through the full pipeline and export identified clips at original resolution and codec via FFmpeg stream copy (`-c:v copy -c:a copy`).
+
+The legacy 1080×1920 vertical render with karaoke subtitles is still available as an explicitly opt-in path via `/api/render/*` endpoints.
+
+## Agent Access
+
+AI agents can connect to a user account via **API keys** or **device-code pairing**:
+
+1. **Device code flow** (no browser needed):
+   - Agent: `POST /api/api-keys/device-code` with requested scopes
+   - User: `POST /api/api-keys/device-code/approve` from the web UI
+   - Agent: `POST /api/api-keys/device-code/exchange` to get the API key
+
+2. **API key auth**: `Authorization: Bearer mc_live_...` header on all endpoints
+
+3. **Agent discovery**: `GET /api/agent/info` — returns identity, scopes, capabilities
+
+Available scopes: `ingest`, `transcribe`, `highlights`, `pipeline`, `clips`, `projects`, `render`, `clip-studio`, `api-keys`, `agent`
 
 ## Quick start
 
-1. Copy `.env.example` to `.env` and fill in your values (see below).
-2. Pull a model into Ollama (once the stack is running):
-   ```
-   docker exec -it momiji-ollama ollama pull llama3.1:8b
-   ```
+1. Copy `.env.example` to `.env` and fill in values
+2. Pull models: `docker exec -it momiji-ollama ollama pull gemma3:latest && ollama pull gemma4:12b`
+3. Start: `docker compose up --build`
+4. Open http://localhost:7860
 
-**CPU / Apple Silicon / AMD:**
-```bash
-docker compose up --build
-```
-
-**Nvidia GPU (transcription + Ollama on GPU):**
-```bash
-docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up --build
-```
-
-Open [http://localhost:7860](http://localhost:7860) in your browser.
-
-## Environment variables
-
-Copy `.env.example` → `.env` and set these:
+## Environment
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_BASE_URL` | `http://ollama:11434/v1` | OpenAI-compatible API endpoint. Works with Ollama, OpenAI, LiteLLM, Groq. |
-| `LLM_API_KEY` | `ollama` | API key for the LLM endpoint. Use `ollama` for local Ollama; your OpenAI key for `api.openai.com`. |
-| `LLM_MODEL` | `llama3.1:8b` | Default model to pre-select in the UI. |
-| `WHISPER_MODEL` | `large-v3` | Whisper model size. Larger = more accurate but slower and more VRAM. |
-| `WHISPER_DEVICE` | `auto` | `auto` detects CUDA → Apple Silicon → CPU. Override with `cuda` or `cpu`. |
+| `LLM_MODEL` | `gemma3:latest` | Default LLM for general tasks |
+| `HIGHLIGHT_LLM_MODEL` | `gemma4:12b` | LLM for highlight detection |
+| `WHISPER_MODEL` | `small` | Whisper model size |
+| `RAM_TIER` | `standard` | `low` (8GB), `standard` (16GB), `high` (32GB+) |
+| `OLLAMA_NUM_CTX` | `8192` | Ollama context window limit |
+| `VISION_SCAN_FPS` | `0.25` | Frame sampling rate |
+| `CLIP_STUDIO_EXPORT_QUALITY` | `source` | `source`, `visually_lossless`, `high` |
 
-## Recommended Ollama models
+## Resource limits
 
-| Model | VRAM | Notes |
+All Docker containers have memory limits tuned for 16GB machines. Adjust via env vars:
+
+| Variable | Default | Container |
 |---|---|---|
-| `llama3.1:8b` | ~6 GB | Good balance, recommended default |
-| `gemma3:27b` | ~18 GB | Better quality, mid-range GPU |
-| `llama3.1:70b` | ~40 GB | Best quality, high-end GPU |
-| `mistral:7b` | ~5 GB | Fast, CPU-viable fallback |
+| `OLLAMA_MEMORY_LIMIT` | `9g` | Ollama |
+| `CELERY_MEMORY_LIMIT` | `3g` | Celery worker |
+| `BACKEND_MEMORY_LIMIT` | `1g` | FastAPI |
+| `REDIS_MAXMEMORY` | `256mb` | Redis |
 
-## Using OpenAI instead of Ollama
-
-Set in `.env`:
-```
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_API_KEY=sk-...
-LLM_MODEL=gpt-4o-mini
-```
-
-## Pipeline
-
-1. **Ingest** — upload an MP4/MKV or paste a YouTube, Twitch, or Kick VOD URL.
-2. **Transcribe** — faster-whisper runs on GPU (or CPU) and saves a JSON transcript with word-level timestamps.
-3. **Highlight detection** — the transcript is chunked and sent to the LLM, which identifies 3–5 clip candidates scored by virality.
-4. **Review & Render** — drag the crop boxes to mark your facecam and gameplay regions, adjust timestamps, preview inline, then render a 9:16 vertical MP4 with burned-in karaoke subtitles.
-
-## Workspace
-
-All downloaded videos, transcripts, frames, and renders are saved to `./workspace/` (mounted into the container). Transcripts are cached — re-uploading the same video skips transcription.
-
-## Test highlight detection without the UI
-
-```bash
-python test_highlight_detection.py workspace/<stem>_transcript.json
-```
-
-Reads `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL` from `.env` or environment.
+For 8GB machines, set `RAM_TIER=low` and reduce memory limits accordingly.

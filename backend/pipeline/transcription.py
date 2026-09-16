@@ -28,6 +28,14 @@ ProgressCallback = Callable[[float, str], None]
 _model_cache: dict[tuple[str, str, str], "WhisperModel"] = {}
 
 
+def evict_model_cache() -> None:
+    """Release cached Whisper models and request immediate garbage collection."""
+    import gc
+
+    _model_cache.clear()
+    gc.collect()
+
+
 def _get_model(model_size: str, device: str, compute_type: str) -> "WhisperModel":
     """Return a cached WhisperModel, loading it on first use."""
     from faster_whisper import WhisperModel

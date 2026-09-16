@@ -1,11 +1,21 @@
-# production environment — standalone compose file
-# Ports: 7865 (frontend), 8001 (backend)
-# Workspace: ./workspace-prod
-# Prerequisite: Start shared Ollama first: docker compose -f docker-compose.shared.yml up -d
-# Use with: docker compose -f docker-compose.prod.yml -p momiji-prod --env-file .env.prod up
-# Or: ./scripts/start-prod.sh (runs attached for live logs)
+# Production environment — complete standalone application stack using shared Ollama.
+# Start Ollama first: docker compose -f docker-compose.shared.yml up -d
+# Then: docker compose -f docker-compose.prod.yml -p momiji-prod --env-file .env.prod up -d
 
 services:
+  redis-prod:
+    image: redis:7-alpine
+    container_name: momiji-redis-prod
+    command: redis-server --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru
+    mem_limit: ${REDIS_MEMORY_LIMIT:-384m}
+    networks: [momiji-prod-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   momiji-clipper-prod:
     build:
       context: ./backend
@@ -13,27 +23,69 @@ services:
       args:
         BASE_IMAGE: python:3.10-slim
     container_name: momiji-clipper-prod
-    environment:
-      - WORKSPACE_DIR=/app/workspace
-      - WHISPER_MODEL=${WHISPER_MODEL:-large-v3}
-      - WHISPER_prodICE=${WHISPER_prodICE:-auto}
-      - LLM_BASE_URL=http://ollama-shared:11434/v1
-      - LLM_API_KEY=ollama
-      - LLM_MODEL=${LLM_MODEL:-gemma3:latest}
-      - HIGHLIGHT_FALLBACK_MODEL=${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
-      - LOCAL_LLM_MODELS=${LOCAL_LLM_MODELS:-gemma3:latest,gemma4:12b}
-      - VISION_MODEL=${VISION_MODEL:-gemma3:latest}
-      - VISION_SCAN_FPS=${VISION_SCAN_FPS:-1}
-      - VISION_WINDOW_SECONDS=${VISION_WINDOW_SECONDS:-60}
-      - VISION_MAX_FRAMES=${VISION_MAX_FRAMES:-360}
-      - VISION_BATCH_SIZE=${VISION_BATCH_SIZE:-4}
-      - DATABASE_URL=${DATABASE_URL}
-      - JWT_SECRET=${JWT_SECRET}
-      - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
+    environment: &app_environment
+      WORKSPACE_DIR: /app/workspace
+      RAM_TIER: ${RAM_TIER:-standard}
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-auto}
+      LLM_BASE_URL: http://ollama-shared:11434/v1
+      LLM_API_KEY: ollama
+      LLM_MODEL: ${LLM_MODEL:-gemma3:latest}
+      HIGHLIGHT_LLM_BASE_URL: ${HIGHLIGHT_LLM_BASE_URL:-http://ollama-shared:11434/v1}
+      HIGHLIGHT_LLM_API_KEY: ${HIGHLIGHT_LLM_API_KEY:-ollama}
+      HIGHLIGHT_LLM_MODEL: ${HIGHLIGHT_LLM_MODEL:-gemma4:12b}
+      HIGHLIGHT_FALLBACK_MODEL: ${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
+      LOCAL_LLM_MODELS: ${LOCAL_LLM_MODELS:-gemma3:latest,gemma4:12b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
+      VISION_MODEL: ${VISION_MODEL:-gemma3:latest}
+      VISION_SCAN_FPS: ${VISION_SCAN_FPS:-0.25}
+      VISION_WINDOW_SECONDS: ${VISION_WINDOW_SECONDS:-120}
+      VISION_MAX_FRAMES: ${VISION_MAX_FRAMES:-180}
+      VISION_BATCH_SIZE: ${VISION_BATCH_SIZE:-2}
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_KEY_DIR: /app/workspace/.keys
+      OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY}
+      CELERY_BROKER_URL: redis://redis-prod:6379/0
+      CELERY_RESULT_BACKEND: redis://redis-prod:6379/1
+      CLIP_STUDIO_EXPORT_QUALITY: source
+      CLIP_STUDIO_EXPORT_FORMAT: ${CLIP_STUDIO_EXPORT_FORMAT:-mp4}
+      CLIP_STUDIO_INCLUDE_METADATA: ${CLIP_STUDIO_INCLUDE_METADATA:-true}
+      CLIP_STUDIO_GENERATE_EDL: ${CLIP_STUDIO_GENERATE_EDL:-false}
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-1g}
     volumes:
       - ./workspace-prod:/app/workspace
-    networks:
-      - momiji-llm-network
+    networks: [momiji-prod-net, momiji-llm-network]
+    depends_on:
+      redis-prod:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  celery-worker-prod:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: python:3.10-slim
+    container_name: momiji-celery-prod
+    command: celery -A celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-1} --max-tasks-per-child=${CELERY_MAX_TASKS_PER_CHILD:-1} --max-memory-per-child=${CELERY_MAX_MEMORY_KB:-2621440}
+    environment: *app_environment
+    mem_limit: ${CELERY_MEMORY_LIMIT:-3g}
+    volumes:
+      - ./workspace-prod:/app/workspace
+    networks: [momiji-prod-net, momiji-llm-network]
+    depends_on:
+      redis-prod:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A celery_app inspect ping -d celery@$$HOSTNAME --timeout=5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
     restart: unless-stopped
 
   momiji-frontend-prod:
@@ -43,15 +95,19 @@ services:
     container_name: momiji-frontend-prod
     environment:
       - BACKEND_HOST=momiji-clipper-prod
+    mem_limit: ${FRONTEND_MEMORY_LIMIT:-128m}
     ports:
       - "7865:80"
     depends_on:
-      - momiji-clipper-prod
-    networks:
-      - momiji-llm-network
+      momiji-clipper-prod:
+        condition: service_healthy
+    networks: [momiji-prod-net]
     restart: unless-stopped
 
 networks:
+  momiji-prod-net:
+    name: momiji-prod-net
+    driver: bridge
   momiji-llm-network:
     external: true
     name: momiji-llm-network

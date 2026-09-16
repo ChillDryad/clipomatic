@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   batchProcessVideosForClips,
   cancelClipStudioQueue,
@@ -119,8 +120,9 @@ export default function ClipStudioPage() {
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6 max-w-7xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Clip Studio</h1>
       <p className="text-gray-400 mb-6">
-        Batch process videos through the full pipeline (transcribe → detect highlights → export).
-        All clips exported at source quality and resolution — no re-encoding, no subtitles burned in.
+        The source-quality default: batch process videos through transcribe → detect highlights → export.
+        Clips keep their source quality and resolution — no re-encoding and no subtitles burned in.
+        Legacy vertical rendering with burned-in subtitles remains available as an opt-in workflow.
       </p>
 
       {error && (
@@ -189,13 +191,21 @@ export default function ClipStudioPage() {
           <h2 className="text-sm font-semibold text-gray-300">
             Select Videos ({selected.size} selected)
           </h2>
-          <button
-            onClick={handleEnqueue}
-            disabled={selected.size === 0}
-            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 rounded text-sm font-medium transition"
-          >
-            Process {selected.size > 0 ? `(${selected.size})` : ''}
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/pipeline"
+              className="px-4 py-1.5 border border-gray-700 hover:border-gray-500 rounded text-sm font-medium transition"
+            >
+              Import a source
+            </Link>
+            <button
+              onClick={handleEnqueue}
+              disabled={selected.size === 0}
+              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 rounded text-sm font-medium transition"
+            >
+              Process {selected.size > 0 ? `(${selected.size})` : ''}
+            </button>
+          </div>
         </div>
         <div className="space-y-1 max-h-64 overflow-y-auto">
           {projects.map(project => (

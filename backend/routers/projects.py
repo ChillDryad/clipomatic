@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import select, func, or_
 
 from db import User, VideoProject, GeneratedClip, TeamMember, Transcript, get_session_cm
-from auth import get_current_user
+from auth import get_current_user_or_api_key
 from utils.helpers import _clips_cache_path, _parse_clip_key, _regenerate_clip_metadata, _user_dict
 from pydantic import BaseModel
 
@@ -53,7 +53,7 @@ class AddClipsRequest(BaseModel):
 
 
 @router.post("/check-duplicate")
-async def check_duplicate_project(req: CheckDuplicateRequest, user: User = Depends(get_current_user)):
+async def check_duplicate_project(req: CheckDuplicateRequest, user: User = Depends(get_current_user_or_api_key)):
     """Check if a video with the same URL or content hash already exists for this user."""
     async with get_session_cm() as session:
         query = select(VideoProject).where(VideoProject.owner_id == user.id)
@@ -77,7 +77,7 @@ async def check_duplicate_project(req: CheckDuplicateRequest, user: User = Depen
 
 
 @router.post("")
-async def create_project(req: CreateProjectRequest, user: User = Depends(get_current_user)):
+async def create_project(req: CreateProjectRequest, user: User = Depends(get_current_user_or_api_key)):
     """Create a new video project."""
     async with get_session_cm() as session:
         if req.team_id:
@@ -119,7 +119,7 @@ async def list_projects(
     team_id: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_api_key),
 ):
     """List user's video projects, optionally filtered by team. Supports pagination."""
     async with get_session_cm() as session:
@@ -188,7 +188,7 @@ async def list_projects(
 
 
 @router.get("/{project_id}")
-async def get_project(project_id: str, user: User = Depends(get_current_user)):
+async def get_project(project_id: str, user: User = Depends(get_current_user_or_api_key)):
     """Get a video project by ID."""
     async with get_session_cm() as session:
         result = await session.execute(select(VideoProject).where(VideoProject.id == project_id))
@@ -243,7 +243,7 @@ async def get_project(project_id: str, user: User = Depends(get_current_user)):
 
 
 @router.delete("/{project_id}")
-async def delete_project(project_id: str, user: User = Depends(get_current_user)):
+async def delete_project(project_id: str, user: User = Depends(get_current_user_or_api_key)):
     """Delete a video project and clean up workspace files."""
     import shutil
 
@@ -330,7 +330,7 @@ async def delete_project(project_id: str, user: User = Depends(get_current_user)
 
 
 @router.post("/{project_id}/clips")
-async def add_clips_to_project(project_id: str, req: AddClipsRequest, user: User = Depends(get_current_user)):
+async def add_clips_to_project(project_id: str, req: AddClipsRequest, user: User = Depends(get_current_user_or_api_key)):
     """Add clips to a project."""
     async with get_session_cm() as session:
         project = await session.get(VideoProject, project_id)
@@ -369,7 +369,7 @@ async def add_clips_to_project(project_id: str, req: AddClipsRequest, user: User
 
 
 @router.put("/{project_id}/clips/{clip_index}")
-async def update_project_clip(project_id: str, clip_index: int, req: dict, user: User = Depends(get_current_user)):
+async def update_project_clip(project_id: str, clip_index: int, req: dict, user: User = Depends(get_current_user_or_api_key)):
     """Update a clip's metadata."""
     async with get_session_cm() as session:
         project = await session.get(VideoProject, project_id)
@@ -418,7 +418,7 @@ async def update_project_clip(project_id: str, clip_index: int, req: dict, user:
 
 
 @router.get("/{project_id}/clips")
-async def get_project_clips(project_id: str, user: User = Depends(get_current_user)):
+async def get_project_clips(project_id: str, user: User = Depends(get_current_user_or_api_key)):
     """
     Get clips for a project.
     Prefers database clips, but falls back to cache file and migrates to DB if found.
@@ -516,7 +516,7 @@ async def get_project_clips(project_id: str, user: User = Depends(get_current_us
 
 @router.post("/{project_id}/clips/{clip_index}/regenerate-metadata")
 async def regenerate_clip_metadata(
-    project_id: str, clip_index: int, req: dict, user: User = Depends(get_current_user)
+    project_id: str, clip_index: int, req: dict, user: User = Depends(get_current_user_or_api_key)
 ):
     """Regenerate title and hashtags for a clip using the LLM."""
     async with get_session_cm() as session:
@@ -553,7 +553,7 @@ async def regenerate_clip_metadata(
 
 
 @router.get("/{project_id}/pipeline-state")
-async def get_project_pipeline_state(project_id: str, user: User = Depends(get_current_user)):
+async def get_project_pipeline_state(project_id: str, user: User = Depends(get_current_user_or_api_key)):
     """
     Return the complete pipeline state for a project.
     Prefers database records, falls back to cache files.

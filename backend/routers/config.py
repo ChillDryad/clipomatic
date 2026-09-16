@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from db import User
-from auth import get_current_user
+from auth import get_current_user, get_current_user_or_api_key
 
 router = APIRouter(prefix="/api", tags=["Configuration"])
 
@@ -105,6 +105,7 @@ async def update_config(
 async def get_models(
     base_url: str = Query(default=""),
     api_key: str = Query(default=""),
+    user: User = Depends(get_current_user_or_api_key),
 ):
     """
     List available models from the LLM provider.

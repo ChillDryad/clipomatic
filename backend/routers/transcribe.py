@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from db import User, VideoProject, Transcript, get_session_cm
-from auth import get_current_user
+from auth import get_current_user_or_api_key
 from pipeline import transcription
 from utils.sse import _sse_response, _sse_stream
 from utils.helpers import _update_project_status
@@ -43,7 +43,10 @@ class TranscribeSegmentRequest(BaseModel):
 
 
 @router.post("")
-async def transcribe(req: TranscribeRequest):
+async def transcribe(
+    req: TranscribeRequest,
+    user: User = Depends(get_current_user_or_api_key),
+):
     """Transcribe a video or audio file with SSE progress."""
     if not req.video_path and not req.audio_path:
         raise HTTPException(
@@ -152,7 +155,7 @@ async def transcribe(req: TranscribeRequest):
 
 @router.get("/cached")
 async def transcribe_cached(
-    path: str = Query(...), user: User = Depends(get_current_user)
+    path: str = Query(...), user: User = Depends(get_current_user_or_api_key)
 ):
     """Return cached transcript JSON for a given video/audio path, or 404."""
     stem = os.path.splitext(os.path.basename(path))[0]
@@ -170,7 +173,7 @@ class SaveTranscriptRequest(BaseModel):
 
 @router.post("/save-cached")
 async def save_cached_transcript(
-    req: SaveTranscriptRequest, user: User = Depends(get_current_user)
+    req: SaveTranscriptRequest, user: User = Depends(get_current_user_or_api_key)
 ):
     """
     Save a cached transcript to the database for a project.
@@ -229,7 +232,10 @@ async def save_cached_transcript(
 
 
 @router.post("/segment")
-async def transcribe_segment(req: TranscribeSegmentRequest):
+async def transcribe_segment(
+    req: TranscribeSegmentRequest,
+    user: User = Depends(get_current_user_or_api_key),
+):
     """Re-transcribe a specific time window with a chosen Whisper model. SSE progress."""
     if not req.video_path and not req.audio_path:
         raise HTTPException(

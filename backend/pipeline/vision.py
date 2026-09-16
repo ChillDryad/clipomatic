@@ -22,24 +22,116 @@ import tempfile
 from typing import Callable
 
 from pipeline.media import get_media_duration
+from pipeline.performance import get_ram_tier_config
 
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[float, str], None]
 
-# Sample one frame every N seconds.  Higher = fewer frames = faster + cheaper.
-# 30s is a good default — catches scene changes without flooding the LLM.
-DEFAULT_SAMPLE_INTERVAL = 30.0
-
-# Maximum frames to analyse per video to bound cost.
-# For a 4h stream at 30s intervals that's 480 frames — cap at 120 (every ~2min).
-MAX_FRAMES = 120
+_DEFAULT_LIMITS = get_ram_tier_config()
+# Constrained-safe defaults: one scan frame every four seconds and at most
+# two hours' worth of one-per-minute LLM candidates.
+DEFAULT_SCAN_FPS = _DEFAULT_LIMITS.vision_fps
+DEFAULT_WINDOW_SECONDS = 60.0
+MAX_FRAMES = _DEFAULT_LIMITS.vision_max_frames
+DEFAULT_BATCH_SIZE = 4
+DEFAULT_CACHE_BATCHES = _DEFAULT_LIMITS.vision_cache_batches
+DEFAULT_NUM_CTX = _DEFAULT_LIMITS.ollama_num_ctx
 
 # JPEG quality for sampled frames (lower = smaller payloads to the LLM)
 JPEG_QUALITY = 2  # ffmpeg -q:v scale (2 = high quality, reasonable size)
 
 # Resolution to downscale frames to before sending (keeps payloads small)
 SAMPLE_WIDTH = 512  # pixels — wide enough for the LLM to understand the scene
+SCAN_WIDTH = 160
+
+
+def _score_scanned_frames(frame_paths: list[str], fps: float) -> list[dict]:
+    """Attach timestamps and normalized frame-to-frame activity scores."""
+    from PIL import Image, ImageChops, ImageStat
+
+    if fps <= 0:
+        raise ValueError("fps must be greater than zero")
+
+    scored: list[dict] = []
+    previous = None
+    for index, frame_path in enumerate(frame_paths):
+        with Image.open(frame_path) as image:
+            current = image.convert("L")
+            activity = 0.0
+            if previous is not None:
+                difference = ImageChops.difference(previous, current)
+                activity = float(ImageStat.Stat(difference).mean[0]) / 255.0
+            previous = current.copy()
+        scored.append({
+            "timestamp": round((index + 0.5) / fps, 3),
+            "path": frame_path,
+            "activity": activity,
+        })
+    return scored
+
+
+def _select_frame_candidates(
+    frames: list[dict],
+    window_seconds: float,
+    max_frames: int,
+) -> list[dict]:
+    """Select timeline representatives plus the most active remaining frames."""
+    if not frames or max_frames <= 0 or window_seconds <= 0:
+        return []
+
+    ordered = sorted(frames, key=lambda frame: float(frame["timestamp"]))
+    windows: dict[int, list[dict]] = {}
+    for frame in ordered:
+        window = int(float(frame["timestamp"]) // window_seconds)
+        windows.setdefault(window, []).append(frame)
+
+    # One median frame per window preserves the stream's overall visual rhythm.
+    representatives = [
+        window_frames[len(window_frames) // 2]
+        for window_frames in windows.values()
+    ]
+
+    if len(representatives) >= max_frames:
+        if max_frames == 1:
+            return [representatives[len(representatives) // 2]]
+        # Evenly reduce representatives while retaining both ends of the VOD.
+        indices = {
+            round(i * (len(representatives) - 1) / (max_frames - 1))
+            for i in range(max_frames)
+        }
+        return sorted(
+            (representatives[index] for index in indices),
+            key=lambda frame: float(frame["timestamp"]),
+        )
+
+    selected = list(representatives)
+    selected_ids = {id(frame) for frame in selected}
+    activity_candidates = sorted(
+        (frame for frame in ordered if id(frame) not in selected_ids),
+        key=lambda frame: float(frame.get("activity", 0.0)),
+        reverse=True,
+    )
+    selected.extend(activity_candidates[: max_frames - len(selected)])
+    return sorted(selected, key=lambda frame: float(frame["timestamp"]))
+
+
+def _materialize_selected_frames(
+    video_path: str,
+    candidates: list[dict],
+    output_dir: str,
+) -> list[dict]:
+    """Re-extract selected timestamps at analysis resolution."""
+    materialized = []
+    for candidate in candidates:
+        timestamp = float(candidate["timestamp"])
+        frame_path = _sample_frame(video_path, timestamp, output_dir)
+        if frame_path is None:
+            continue
+        frame = dict(candidate)
+        frame["path"] = frame_path
+        materialized.append(frame)
+    return materialized
 
 
 def _fire(callback: ProgressCallback | None, fraction: float, label: str) -> None:
@@ -98,6 +190,63 @@ Analyze the frame and respond with a JSON object containing exactly these keys:
 Output ONLY the JSON object. No markdown, no explanations."""
 
 
+def _parse_vision_batch_response(raw: str, timestamps: list[float]) -> list[dict]:
+    """Parse a JSON batch response and bind analyses to requested timestamps."""
+    import re
+
+    cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        array_match = re.search(r"\[.*\]", cleaned, re.DOTALL)
+        if not array_match:
+            logger.warning("Failed to parse vision batch response: %s", raw[:200])
+            return []
+        try:
+            parsed = json.loads(array_match.group())
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse vision batch response: %s", raw[:200])
+            return []
+
+    if isinstance(parsed, dict):
+        parsed = parsed.get("frames") or parsed.get("analyses") or parsed.get("results")
+    if not isinstance(parsed, list):
+        return []
+
+    results = []
+    for timestamp, analysis in zip(timestamps, parsed):
+        if isinstance(analysis, dict):
+            item = dict(analysis)
+            item["timestamp"] = timestamp
+            results.append(item)
+    return results
+
+
+def _load_vision_cache(
+    cache_path: str,
+    fingerprint: dict,
+    config: dict,
+) -> dict | None:
+    """Load cache only when the source fingerprint and analysis config match."""
+    try:
+        with open(cache_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if payload.get("fingerprint") != fingerprint or payload.get("config") != config:
+        return None
+    return payload
+
+
+def _save_vision_cache(cache_path: str, payload: dict) -> None:
+    """Atomically persist resumable vision progress."""
+    os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
+    temp_path = f"{cache_path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False)
+    os.replace(temp_path, cache_path)
+
+
 def _parse_vision_response(raw: str) -> dict | None:
     """Parse the vision LLM response into a structured dict. Tolerates markdown fences."""
     import re
@@ -116,123 +265,210 @@ def _parse_vision_response(raw: str) -> dict | None:
     return None
 
 
+def _scan_video_frames(
+    video_path: str,
+    output_dir: str,
+    fps: float = DEFAULT_SCAN_FPS,
+    width: int = SCAN_WIDTH,
+) -> list[dict]:
+    """Extract a low-resolution 1-FPS scan in one sequential FFmpeg pass."""
+    if fps <= 0:
+        raise ValueError("scan fps must be greater than zero")
+
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    scan_dir = os.path.join(output_dir, f".{stem}_vision_scan")
+    os.makedirs(scan_dir, exist_ok=True)
+    for name in os.listdir(scan_dir):
+        if name.endswith(".jpg"):
+            try:
+                os.unlink(os.path.join(scan_dir, name))
+            except OSError:
+                pass
+
+    output_pattern = os.path.join(scan_dir, "scan_%08d.jpg")
+    command = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-vf", f"fps={fps},scale={width}:-1",
+        "-q:v", "8",
+        output_pattern,
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Vision scan failed: {result.stderr.strip()[:500]}")
+
+    frame_paths = sorted(
+        os.path.join(scan_dir, name)
+        for name in os.listdir(scan_dir)
+        if name.endswith(".jpg")
+    )
+    return _score_scanned_frames(frame_paths, fps)
+
+
+def _vision_scan_dir(video_path: str, output_dir: str) -> str:
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    return os.path.join(output_dir, f".{stem}_vision_scan")
+
+
 def analyze_video_frames(
     video_path: str,
     output_dir: str,
     api_key: str,
     base_url: str,
     model: str,
-    sample_interval: float = DEFAULT_SAMPLE_INTERVAL,
+    scan_fps: float = DEFAULT_SCAN_FPS,
+    window_seconds: float = DEFAULT_WINDOW_SECONDS,
     max_frames: int = MAX_FRAMES,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    cache_every_batches: int = DEFAULT_CACHE_BATCHES,
+    num_ctx: int = DEFAULT_NUM_CTX,
     progress_callback: ProgressCallback | None = None,
 ) -> list[dict]:
-    """Sample frames from the video and analyze each with a vision LLM.
+    """Scan at 1 FPS, select representative frames, and analyze in batches."""
+    from llm_policy import validate_local_model
 
-    Args:
-        video_path: Path to the local video file.
-        output_dir: Directory to store extracted frames (reused as frame cache).
-        api_key: LLM API key.
-        base_url: OpenAI-compatible base URL.
-        model: Vision-capable model name (e.g. "llava:13b", "gpt-4o-mini").
-        sample_interval: Seconds between sampled frames.
-        max_frames: Hard cap on number of frames to analyze.
-        progress_callback: Optional (fraction, label) callback.
+    model = validate_local_model(model)
+    if (
+        scan_fps <= 0 or window_seconds <= 0 or max_frames <= 0
+        or batch_size <= 0 or cache_every_batches <= 0 or num_ctx <= 0
+    ):
+        raise ValueError("Vision scan and budget settings must be greater than zero")
 
-    Returns:
-        List of frame analysis dicts:
-        [
-            {
-                "timestamp": 30.0,
-                "visual_energy": 7,
-                "scene_type": "gameplay",
-                "description": "Intense boss fight with the player at low health.",
-                "has_text_overlay": false,
-                "emotional_tone": "surprised",
-            },
-            ...
-        ]
-    """
-    from openai import OpenAI
+    stat = os.stat(video_path)
+    fingerprint = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+    config = {
+        "model": model,
+        "scan_fps": scan_fps,
+        "window_seconds": window_seconds,
+        "max_frames": max_frames,
+        "batch_size": batch_size,
+        "num_ctx": num_ctx,
+    }
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    cache_path = os.path.join(output_dir, f"{stem}_vision_analysis.json")
+    cache = _load_vision_cache(cache_path, fingerprint, config)
+    if cache and cache.get("complete"):
+        return cache.get("results", [])
 
     duration = get_media_duration(video_path)
     if duration <= 0:
         logger.warning("Cannot determine video duration for vision analysis")
         return []
 
-    # Calculate sample timestamps
-    raw_count = int(duration / sample_interval)
-    if raw_count > max_frames:
-        # Spread evenly across the video instead of just sampling the first N
-        sample_interval = duration / max_frames
+    from openai import OpenAI
+    import shutil
 
-    timestamps = []
-    t = sample_interval / 2  # start at half-interval to avoid pure black intro
-    while t < duration:
-        timestamps.append(round(t, 1))
-        t += sample_interval
+    results = list(cache.get("results", [])) if cache else []
+    completed_timestamps = {
+        float(item["timestamp"])
+        for item in results
+        if "timestamp" in item
+    }
+    scan_dir = _vision_scan_dir(video_path, output_dir)
+    selected_dir = os.path.join(output_dir, f".{stem}_vision_selected")
 
-    if not timestamps:
-        return []
+    try:
+        _fire(progress_callback, 0.0, f"Scanning video at {scan_fps:g} FPS…")
+        scanned = _scan_video_frames(video_path, output_dir, fps=scan_fps)
+        candidates = _select_frame_candidates(scanned, window_seconds, max_frames)
+        pending = [
+            frame for frame in candidates
+            if float(frame["timestamp"]) not in completed_timestamps
+        ]
+        pending = _materialize_selected_frames(video_path, pending, selected_dir)
+        if not candidates:
+            return []
 
-    _fire(progress_callback, 0.0, f"Sampling {len(timestamps)} frames for vision analysis…")
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        system_prompt = _build_vision_prompt() + (
+            "\nYou may receive multiple frames. Return a JSON array with exactly one "
+            "analysis object per frame, in the same order as the images."
+        )
+        total_batches = max(1, (len(pending) + batch_size - 1) // batch_size)
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
-    system_prompt = _build_vision_prompt()
-    frames_dir = os.path.join(output_dir, "vision_frames")
-    results: list[dict] = []
-
-    for i, ts in enumerate(timestamps):
-        progress = i / len(timestamps)
-        _fire(progress_callback, progress, f"Vision analysis {i+1}/{len(timestamps)} (t={ts:.0f}s)…")
-
-        frame_path = _sample_frame(video_path, ts, frames_dir)
-        if frame_path is None:
-            continue
-
-        try:
-            b64 = _encode_frame_b64(frame_path)
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"Analyze this frame from timestamp {ts:.1f}s of a VTuber stream.",
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{b64}",
-                                },
-                            },
-                        ],
-                    },
-                ],
-                temperature=0.3,
-                timeout=60.0,
+        for batch_index in range(0, len(pending), batch_size):
+            batch = pending[batch_index:batch_index + batch_size]
+            batch_number = batch_index // batch_size + 1
+            _fire(
+                progress_callback,
+                batch_number / total_batches,
+                f"Vision batch {batch_number}/{total_batches} "
+                f"({len(results)}/{len(candidates)} frames complete)…",
             )
-            raw = resp.choices[0].message.content or ""
-            analysis = _parse_vision_response(raw)
-            if analysis:
-                analysis["timestamp"] = ts
-                results.append(analysis)
-        except Exception as exc:
-            logger.warning(f"Vision analysis failed for frame at {ts}s: {exc}")
-            # Continue — one failed frame shouldn't kill the whole analysis
 
-    _fire(progress_callback, 1.0, f"Vision analysis complete — {len(results)} frames analyzed.")
+            content: list[dict] = [{
+                "type": "text",
+                "text": (
+                    f"Analyze these {len(batch)} VTuber stream frames. "
+                    "Return one JSON object per image in the same order."
+                ),
+            }]
+            timestamps = []
+            for frame in batch:
+                timestamp = float(frame["timestamp"])
+                timestamps.append(timestamp)
+                content.append({
+                    "type": "text",
+                    "text": f"Frame timestamp: {timestamp:.1f}s",
+                })
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{_encode_frame_b64(frame['path'])}",
+                    },
+                })
 
-    # Clean up frame images to save disk (keep the analysis, not the pixels)
-    for fname in os.listdir(frames_dir) if os.path.isdir(frames_dir) else []:
-        try:
-            os.unlink(os.path.join(frames_dir, fname))
-        except OSError:
-            pass
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": content},
+                    ],
+                    temperature=0.3,
+                    timeout=120.0,
+                    extra_body={"num_ctx": num_ctx},
+                )
+                raw = response.choices[0].message.content or ""
+                parsed = _parse_vision_batch_response(raw, timestamps)
+                results.extend(parsed)
+                completed_timestamps.update(
+                    float(item["timestamp"]) for item in parsed
+                )
+                if (
+                    batch_number % cache_every_batches == 0
+                    or batch_number == total_batches
+                ):
+                    _save_vision_cache(cache_path, {
+                        "fingerprint": fingerprint,
+                        "config": config,
+                        "complete": False,
+                        "results": results,
+                    })
+            except Exception as exc:
+                logger.warning(
+                    "Vision batch %s/%s failed: %s",
+                    batch_number,
+                    total_batches,
+                    exc,
+                )
 
-    return results
+        results.sort(key=lambda item: float(item.get("timestamp", 0)))
+        is_complete = len(completed_timestamps) >= len(candidates)
+        _save_vision_cache(cache_path, {
+            "fingerprint": fingerprint,
+            "config": config,
+            "complete": is_complete,
+            "results": results,
+        })
+        _fire(
+            progress_callback,
+            1.0,
+            f"Vision analysis complete — {len(results)} frames analyzed.",
+        )
+        return results
+    finally:
+        shutil.rmtree(scan_dir, ignore_errors=True)
+        shutil.rmtree(selected_dir, ignore_errors=True)
 
 
 def format_vision_annotations(vision_data: list[dict] | None) -> str:

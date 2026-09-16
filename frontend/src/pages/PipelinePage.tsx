@@ -10,6 +10,13 @@ export function PipelinePage() {
 
   return (
     <div className="space-y-6">
+      <div className="glass-card p-4 border border-[var(--ctp-yellow-30)]">
+        <p className="text-sm font-semibold text-[var(--ctp-text)]">Legacy vertical renderer (opt-in)</p>
+        <p className="text-xs text-[var(--ctp-subtext)] mt-1">
+          This workflow reformats clips and burns in subtitles. Use Clip Studio for the default source-quality export workflow.
+        </p>
+      </div>
+
       {/* Auto-pipeline toggle */}
       <div className="flex items-center justify-between glass-card p-3">
         <label className="flex items-center gap-2 cursor-pointer">
