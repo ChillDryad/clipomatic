@@ -102,7 +102,7 @@ Use these to catch moments that transcripts miss — laughter visible on a face,
 
 # Token limit for transcript chunk — increased for Gemma4's larger context
 # ~24k tokens ≈ 96k chars (Gemma4 can handle more than llama3)
-_MAX_CHUNK_CHARS = 8_000  # Small chunks for local 4B model on 16GB machines
+_MAX_CHUNK_CHARS = 12_000  # Fits cloud model 262k context with system prompt
 
 # Fallback model for when primary model times out (smaller, faster)
 _FALLBACK_MODEL = "gemma3:latest"
@@ -434,9 +434,12 @@ def _format_audio_annotations(
     """
     lines: list[str] = []
     seen_times: set[float] = set()
+    _MAX_ANNOTATIONS = 200  # Cap to prevent context overflow
 
     if audio_energy:
         for seg in audio_energy:
+            if len(lines) >= _MAX_ANNOTATIONS:
+                break
             if seg.get("is_spike"):
                 t = seg["start"]
                 lines.append(
