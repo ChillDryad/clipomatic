@@ -102,7 +102,7 @@ Use these to catch moments that transcripts miss — laughter visible on a face,
 
 # Token limit for transcript chunk — increased for Gemma4's larger context
 # ~24k tokens ≈ 96k chars (Gemma4 can handle more than llama3)
-_MAX_CHUNK_CHARS = 24_000  # Reduced for local 12B model compatibility
+_MAX_CHUNK_CHARS = 8_000  # Small chunks for local 4B model on 16GB machines
 
 # Fallback model for when primary model times out (smaller, faster)
 _FALLBACK_MODEL = "gemma3:latest"

@@ -249,7 +249,7 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
     highlight_api_key = os.environ.get("HIGHLIGHT_LLM_API_KEY", api_key)
     highlight_model = config.get("llm_model", os.environ.get("HIGHLIGHT_LLM_MODEL", "gemma4:12b"))
 
-    timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "300"))
+    timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "600"))
     fallback_model = os.environ.get("HIGHLIGHT_FALLBACK_MODEL", "gemma3:latest")
 
     detected_clips = highlight_detection.detect_highlights(
