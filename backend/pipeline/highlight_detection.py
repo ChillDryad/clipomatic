@@ -25,7 +25,7 @@ SINGLE_TURN_SYSTEM = f"""You are a viral clip editor specializing in VTuber VOD 
 You will receive a timestamped transcript. Each line looks like:
  [H:MM:SS.ss] spoken words (e.g. [0:02:05.00] = 2 minutes 5 seconds, [1:30:00.00] = 1 hour 30 minutes)
 ## YOUR TASK
-Find 3-5 moments that would make great short clips (9–90 seconds each).
+Find 3-5 moments that would make great short clips (9–120 seconds each).
 
 ## VIRALITY SCORING CRITERIA (0-100)
 Score based on these factors:
@@ -43,6 +43,14 @@ The brand pillars are:{BRAND_PILLARS}
 - Inside jokes that require 10 minutes of context
 - Clips where the best line is cut off
 - Timestamps marked [OVERLAP] — already covered in a previous part; prefer timestamps from non-overlap lines
+
+## YAP SESSION HANDLING (IMPORTANT)
+The first 30 minutes of a stream often contain "yap sessions" — long storytelling or topic discussions.
+These are gold mines for clips but require careful boundary selection:
+- Include the SETUP and the PAYOFF in the same clip — never cut a story in half
+- If a joke takes 60 seconds of setup before the punchline, start the clip at the setup, not the punchline
+- The clip should make sense to someone who just clicked — they need enough context to get the joke
+- Don't trim aggressively to hit a shorter duration — a 90-second clip with a great payoff beats a 30-second clip that makes no sense
 
 ## HOOK TYPES TO LOOK FOR
 - **Question hook**: "Wait, did I just...?"
@@ -72,7 +80,7 @@ WRONG: "start": "23:35" (dropped hours)
 WRONG: "start": "0:23:35.00" (wrong hours — copy exactly what the transcript shows)
 
 ## CLIP LENGTH
-Target clip length: 9–90 seconds. Pick start and end timestamps that create clips of this length.
+Target clip length: 9–120 seconds. Pick start and end timestamps that create clips of this length. Longer clips (up to 120s) are fine for storytelling or yap-session moments where the setup needs room to breathe — just make sure the punchline/payoff is included before the clip ends.
 
 ## EXAMPLE OUTPUT
 [
@@ -150,27 +158,55 @@ def _snap_to_index(
     return None
 
 
-def _chunk_transcript(text: str, max_chars: int = _MAX_CHUNK_CHARS) -> list[str]:
+def _chunk_transcript(text: str, max_chars: int = _MAX_CHUNK_CHARS, overlap_seconds: float = 90.0) -> list[str]:
     """Split transcript text into chunks that fit within token limits.
 
-    Overlap lines from the previous chunk are prefixed with [OVERLAP]
-    so the LLM knows they were already covered and should not be selected
-    as clip boundaries.
+    Overlap is based on timestamp proximity (not line count) so the LLM
+    gets ~90 seconds of context from the end of the previous chunk. Overlap
+    lines are prefixed with [OVERLAP] so the LLM knows they were already
+    covered and should not be selected as clip boundaries.
     """
     if len(text) <= max_chars:
         return [text]
+
+    import re as _re
 
     chunks = []
     lines = text.splitlines(keepends=True)
     current = []
     current_len = 0
-    OVERLAP_LINES = 20
+
+    # Parse timestamp from a line like [H:MM:SS.ss] text
+    _ts_pattern = _re.compile(r'\[(\d+):(\d+):(\d+\.\d+)\]')
+
+    def _line_timestamp(line: str) -> float | None:
+        m = _ts_pattern.match(line)
+        if not m:
+            return None
+        h, mn, s = int(m.group(1)), int(m.group(2)), float(m.group(3))
+        return h * 3600 + mn * 60 + s
 
     for line in lines:
         if current_len + len(line) > max_chars and current:
             chunks.append("".join(current))
-            # Overlap: keep last N lines, marked as already covered
-            overlap = current[-OVERLAP_LINES:]
+
+            # Find the timestamp of the last line in the current chunk
+            last_ts = None
+            for prev_line in reversed(current):
+                last_ts = _line_timestamp(prev_line)
+                if last_ts is not None:
+                    break
+
+            # Keep overlap lines: everything within overlap_seconds of the last timestamp
+            overlap = []
+            if last_ts is not None:
+                for prev_line in reversed(current):
+                    ts = _line_timestamp(prev_line)
+                    if ts is not None and (last_ts - ts) > overlap_seconds:
+                        break
+                    overlap.append(prev_line)
+                overlap.reverse()
+
             current = [f"[OVERLAP]{ol}" for ol in overlap]
             current_len = sum(len(l) for l in current)
         current.append(line)
@@ -552,6 +588,13 @@ def detect_highlights(
 
     all_clips: list[dict] = []
     n_chunks = len(chunks)
+    _context_carryover_seconds = float(os.environ.get("HIGHLIGHT_CONTEXT_CARRYOVER", "120"))
+    _priority_window_minutes = float(os.environ.get("HIGHLIGHT_PRIORITY_WINDOW", "30"))
+    _priority_boost = int(os.environ.get("HIGHLIGHT_PRIORITY_BOOST", "10"))
+    _max_clip_duration = float(os.environ.get("HIGHLIGHT_MAX_CLIP_DURATION", "120"))
+
+    # Build a flat line list for context carryover lookups
+    flat_lines = flat_text.splitlines()
 
     for i, chunk in enumerate(chunks):
         chunk_label = f"Part {i + 1}/{n_chunks}"
@@ -559,9 +602,47 @@ def detect_highlights(
 
         # Build prompt with dynamic clip target
         system_prompt = SINGLE_TURN_SYSTEM.replace("3-5 moments", f"{per_chunk_target} moments")
+        # Update clip length guidance to match configured max
+        system_prompt = system_prompt.replace("9–90 seconds", f"9–{int(_max_clip_duration)} seconds")
+        system_prompt = system_prompt.replace("9–90s", f"9–{int(_max_clip_duration)}s")
+        system_prompt = system_prompt.replace("Target clip length: 9–90 seconds", f"Target clip length: 9–{int(_max_clip_duration)} seconds")
         if system_prompt_suffix:
             system_prompt += system_prompt_suffix
-        user_message = f"Transcript (part {i + 1} of {n_chunks}):\n\n{chunk}"
+
+        # Build context carryover: last 2 minutes of previous chunk as [PREVIOUS CONTEXT]
+        context_prefix = ""
+        if i > 0 and _context_carryover_seconds > 0:
+            # Find where the previous chunk's non-overlap content started
+            # and extract the last N seconds of real transcript lines
+            prev_chunk = chunks[i - 1]
+            prev_lines = prev_chunk.splitlines()
+            # Get the last timestamp in the previous chunk
+            import re as _re
+            _ts_pat = _re.compile(r'\[(\d+):(\d+):(\d+\.\d+)\]')
+            def _ts(line):
+                m = _ts_pat.match(line.lstrip())
+                if not m:
+                    return None
+                return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+            prev_last_ts = None
+            for pl in reversed(prev_lines):
+                prev_last_ts = _ts(pl)
+                if prev_last_ts is not None:
+                    break
+            if prev_last_ts is not None:
+                cutoff = prev_last_ts - _context_carryover_seconds
+                context_lines = []
+                for pl in prev_lines:
+                    # Skip [OVERLAP] lines in the previous chunk
+                    if pl.startswith("[OVERLAP]"):
+                        continue
+                    ts = _ts(pl)
+                    if ts is not None and ts >= cutoff:
+                        context_lines.append(pl)
+                if context_lines:
+                    context_prefix = "[PREVIOUS CONTEXT — the streamer was talking about this just before this section. Use it to understand references but do NOT create clips from these timestamps:]\n" + "".join(context_lines) + "\n\n"
+
+        user_message = f"{context_prefix}Transcript (part {i + 1} of {n_chunks}):\n\n{chunk}"
         if audio_annotations:
             user_message += audio_annotations
         if vision_annotations:
@@ -604,6 +685,20 @@ def detect_highlights(
 
     _cb(0.95, f"Found {len(all_clips)} raw clips — deduplicating…")
 
+    # Priority window: boost virality scores for clips in the first N minutes
+    # of the stream (where yap sessions and hot topics tend to cluster)
+    priority_window_seconds = _priority_window_minutes * 60
+    if priority_window_seconds > 0:
+        for c in all_clips:
+            clip_mid = (c["start"] + c["end"]) / 2
+            if clip_mid <= priority_window_seconds:
+                original = c.get("virality_score", 50)
+                c["virality_score"] = min(100, original + _priority_boost)
+                logger.debug(
+                    f"Priority boost for clip '{c.get('title', '?')}': "
+                    f"{original} → {c['virality_score']} (within first {_priority_window_minutes:.0f}min)"
+                )
+
     # Filter out clips outside video duration (LLM hallucination guard)
     video_duration = transcript.get("duration", 0)
     if video_duration > 0:
@@ -633,10 +728,10 @@ def detect_highlights(
                 )
                 continue
             duration = end_snap - start_snap
-            if duration < 9 or duration > 90:
+            if duration < 9 or duration > _max_clip_duration:
                 logger.warning(
                     f"Dropping clip {c.get('title', '?')}: "
-                    f"snapped duration {duration:.1f}s outside 9-90s range"
+                    f"snapped duration {duration:.1f}s outside 9-{int(_max_clip_duration)}s range"
                 )
                 continue
             c["start"] = start_snap
