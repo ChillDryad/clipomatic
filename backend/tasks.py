@@ -244,9 +244,15 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
     if not api_key or not base_url:
         raise RuntimeError("LLM_API_KEY and LLM_BASE_URL must be set for highlight detection.")
 
-    # Cloud model override: if LLM_ALLOW_CLOUD is set, use cloud endpoint for highlights
-    highlight_base_url = os.environ.get("HIGHLIGHT_LLM_BASE_URL", base_url)
-    highlight_api_key = os.environ.get("HIGHLIGHT_LLM_API_KEY", api_key)
+    # Cloud highlight routing is opt-in. Keep local deployments local even if a
+    # stale HIGHLIGHT_LLM_* value is present in the stack environment.
+    allow_cloud = os.environ.get("LLM_ALLOW_CLOUD", "").strip().lower() in {"1", "true", "yes"}
+    if allow_cloud:
+        highlight_base_url = os.environ.get("HIGHLIGHT_LLM_BASE_URL", base_url)
+        highlight_api_key = os.environ.get("HIGHLIGHT_LLM_API_KEY", api_key)
+    else:
+        highlight_base_url = base_url
+        highlight_api_key = api_key
     highlight_model = config.get("llm_model", os.environ.get("HIGHLIGHT_LLM_MODEL", "gemma4:12b"))
 
     timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "600"))
