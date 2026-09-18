@@ -2,7 +2,9 @@ name: Publish container images
 
 on:
   push:
-    branches: [main]
+    # Publish `latest` from main; the active deployment branch also publishes
+    # a branch tag so Portainer can test images before merge.
+    branches: [main, feat/api-keys]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
