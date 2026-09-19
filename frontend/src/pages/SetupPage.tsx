@@ -1,78 +1,49 @@
-import { useState } from 'react'
-import { setup, testProvider, type LlmProvider, type ProviderSettings } from '../api'
+import { useEffect, useState } from 'react'
+import { getSetupOllamaModels, setup } from '../api'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 
-const providerDefaults: Record<LlmProvider, Pick<ProviderSettings, 'base_url' | 'llm_model'>> = {
-  ollama: { base_url: 'http://ollama:11434/v1', llm_model: 'llama3.1:8b' },
-  openai: { base_url: 'https://api.openai.com/v1', llm_model: 'gpt-4o-mini' },
-}
-
-const providerOptions: Array<{ value: LlmProvider; title: string; description: string }> = [
-  { value: 'ollama', title: 'Ollama', description: 'Run local models on this server' },
-  { value: 'openai', title: 'OpenAI', description: 'Use your OpenAI API key' },
-]
+const ollamaBaseUrl = 'http://ollama:11434/v1'
 
 export function SetupPage() {
   const { setUser } = useAuth()
-  const [provider, setProvider] = useState<LlmProvider>('ollama')
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [baseUrl, setBaseUrl] = useState(providerDefaults.ollama.base_url)
-  const [apiKey, setApiKey] = useState('')
-  const [llmModel, setLlmModel] = useState(providerDefaults.ollama.llm_model)
+  const [llmModel, setLlmModel] = useState('')
   const [highlightModel, setHighlightModel] = useState('')
   const [visionModel, setVisionModel] = useState('')
   const [models, setModels] = useState<string[]>([])
-  const [connectionMessage, setConnectionMessage] = useState<string | null>(null)
+  const [modelError, setModelError] = useState<string | null>(null)
+  const [isLoadingModels, setIsLoadingModels] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isTesting, setIsTesting] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const providerSettings = (): ProviderSettings => ({
-    provider,
-    base_url: baseUrl.trim(),
-    ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
-    llm_model: llmModel.trim(),
-    ...(highlightModel.trim() ? { highlight_model: highlightModel.trim() } : {}),
-    ...(visionModel.trim() ? { vision_model: visionModel.trim() } : {}),
-  })
-
-  const selectProvider = (nextProvider: LlmProvider) => {
-    setProvider(nextProvider)
-    setBaseUrl(providerDefaults[nextProvider].base_url)
-    setLlmModel(providerDefaults[nextProvider].llm_model)
-    setApiKey('')
-    setModels([])
-    setConnectionMessage(null)
-  }
-
-  const handleTest = async () => {
-    setError(null)
-    setConnectionMessage(null)
-    if (!baseUrl.trim() || !llmModel.trim()) {
-      setError('Add an endpoint and model before testing the connection.')
-      return
-    }
-    if (provider === 'openai' && !apiKey.trim()) {
-      setError('An OpenAI API key is required to test this connection.')
-      return
-    }
-
-    setIsTesting(true)
+  const loadModels = async () => {
+    setIsLoadingModels(true)
+    setModelError(null)
     try {
-      const result = await testProvider(providerSettings())
-      setModels(result.models)
-      setConnectionMessage(result.models.length ? `Connected — found ${result.models.length} model${result.models.length === 1 ? '' : 's'}.` : 'Connected successfully.')
+      const { models: nextModels } = await getSetupOllamaModels()
+      setModels(nextModels)
+      setLlmModel(current => nextModels.includes(current) ? current : (nextModels[0] ?? ''))
+      setHighlightModel(current => nextModels.includes(current) ? current : (nextModels[0] ?? ''))
+      setVisionModel(current => nextModels.includes(current) ? current : (nextModels[0] ?? ''))
+      if (!nextModels.length) {
+        setModelError('No local Ollama models are available. Pull a model with `ollama pull llama3.1:8b`, then refresh this list.')
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not connect to this provider.')
+      setModels([])
+      setModelError(err instanceof Error ? `Could not load local Ollama models: ${err.message}` : 'Could not load local Ollama models. Verify Ollama is running, then refresh this list.')
     } finally {
-      setIsTesting(false)
+      setIsLoadingModels(false)
     }
   }
+
+  useEffect(() => {
+    void loadModels()
+  }, [])
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -85,12 +56,8 @@ export function SetupPage() {
       setError('Password must be at least 8 characters.')
       return
     }
-    if (!baseUrl.trim() || !llmModel.trim()) {
-      setError('An endpoint and primary model are required.')
-      return
-    }
-    if (provider === 'openai' && !apiKey.trim()) {
-      setError('An OpenAI API key is required.')
+    if (!models.length || !llmModel || !highlightModel || !visionModel) {
+      setError('Pull a local Ollama model and select models before finishing setup.')
       return
     }
 
@@ -100,7 +67,11 @@ export function SetupPage() {
         email: email.trim(),
         password,
         ...(displayName.trim() ? { display_name: displayName.trim() } : {}),
-        ...providerSettings(),
+        provider: 'ollama',
+        base_url: 'http://ollama:11434/v1',
+        llm_model: llmModel,
+        highlight_model: highlightModel,
+        vision_model: visionModel,
       })
       setUser(result.user)
       // SetupGate caches setup state for this initial render; reload so it
@@ -113,7 +84,7 @@ export function SetupPage() {
     }
   }
 
-  const apiKeyRequired = provider === 'openai'
+  const modelsUnavailable = isLoadingModels || !models.length
 
   return (
     <main className="min-h-screen px-4 py-8 sm:py-12 relative overflow-hidden">
@@ -126,7 +97,7 @@ export function SetupPage() {
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--ctp-mauve)] to-[var(--ctp-blue)] text-2xl shadow-lg">✦</div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ctp-mauve)]">Momiji Clipper</p>
           <h1 className="mt-2 text-3xl font-bold text-[var(--ctp-text)]">Set up your workspace</h1>
-          <p className="mt-2 text-[var(--ctp-subtext)]">Create the owner account and connect the AI that will find your best clips.</p>
+          <p className="mt-2 text-[var(--ctp-subtext)]">Create the owner account and choose the local Ollama models that will find your best clips.</p>
         </header>
 
         <form onSubmit={handleSubmit} className="glass-card p-5 sm:p-8 space-y-8" noValidate>
@@ -143,21 +114,29 @@ export function SetupPage() {
           </section>
 
           <section className="border-t border-[var(--ctp-overlay)] pt-7">
-            <div className="mb-4 flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--ctp-mauve)] text-sm font-bold text-[var(--ctp-base)]">2</span><div><h2 className="font-semibold text-[var(--ctp-text)]">AI provider</h2><p className="text-sm text-[var(--ctp-subtext)]">You can update these details later in settings.</p></div></div>
-            <div className="grid gap-3 sm:grid-cols-3">
-              {providerOptions.map(option => <button key={option.value} type="button" onClick={() => selectProvider(option.value)} className={`rounded-xl border p-4 text-left transition-colors ${provider === option.value ? 'border-[var(--ctp-mauve)] bg-[var(--ctp-mauve-10)] ring-1 ring-[var(--ctp-mauve)]' : 'border-[var(--ctp-overlay)] hover:border-[var(--ctp-mauve)]'}`}><span className="block font-semibold text-[var(--ctp-text)]">{option.title}</span><span className="mt-1 block text-xs text-[var(--ctp-subtext)]">{option.description}</span></button>)}
+            <div className="mb-4 flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--ctp-mauve)] text-sm font-bold text-[var(--ctp-base)]">2</span><div><h2 className="font-semibold text-[var(--ctp-text)]">Local Ollama models</h2><p className="text-sm text-[var(--ctp-subtext)]">Using Ollama at {ollamaBaseUrl}.</p></div></div>
+            {modelError && <div role="alert" className="mb-4 rounded-xl border border-[var(--ctp-red-30)] bg-[var(--ctp-red-10)] p-3 text-sm text-[var(--ctp-red)]">{modelError}</div>}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="sm:col-span-2 text-sm font-medium text-[var(--ctp-text)]">Primary model
+                <select value={llmModel} onChange={event => setLlmModel(event.target.value)} disabled={modelsUnavailable} required className="mt-1 w-full rounded-lg border border-[var(--ctp-overlay)] bg-[var(--ctp-surface)] px-3 py-2 text-[var(--ctp-text)] disabled:cursor-not-allowed disabled:opacity-60">
+                  {models.map(model => <option key={model} value={model}>{model}</option>)}
+                </select>
+              </label>
+              <label className="text-sm font-medium text-[var(--ctp-text)]">Highlight model
+                <select value={highlightModel} onChange={event => setHighlightModel(event.target.value)} disabled={modelsUnavailable} required className="mt-1 w-full rounded-lg border border-[var(--ctp-overlay)] bg-[var(--ctp-surface)] px-3 py-2 text-[var(--ctp-text)] disabled:cursor-not-allowed disabled:opacity-60">
+                  {models.map(model => <option key={model} value={model}>{model}</option>)}
+                </select>
+              </label>
+              <label className="text-sm font-medium text-[var(--ctp-text)]">Vision model
+                <select value={visionModel} onChange={event => setVisionModel(event.target.value)} disabled={modelsUnavailable} required className="mt-1 w-full rounded-lg border border-[var(--ctp-overlay)] bg-[var(--ctp-surface)] px-3 py-2 text-[var(--ctp-text)] disabled:cursor-not-allowed disabled:opacity-60">
+                  {models.map(model => <option key={model} value={model}>{model}</option>)}
+                </select>
+              </label>
             </div>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <Input label="Base URL" type="url" value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" required />
-              <Input label={`API key${apiKeyRequired ? '' : ' (optional)'}`} type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={apiKeyRequired ? 'sk-...' : 'Leave blank if not needed'} required={apiKeyRequired} autoComplete="off" />
-              <div className="sm:col-span-2"><Input label="Primary model" value={llmModel} onChange={event => setLlmModel(event.target.value)} placeholder="e.g. llama3.1:8b" required list="provider-models" />{models.length > 0 && <datalist id="provider-models">{models.map(model => <option key={model} value={model} />)}</datalist>}</div>
-              <Input label="Highlight model (optional)" value={highlightModel} onChange={event => setHighlightModel(event.target.value)} placeholder="Uses primary model when empty" list="provider-models" />
-              <Input label="Vision model (optional)" value={visionModel} onChange={event => setVisionModel(event.target.value)} placeholder="Uses primary model when empty" list="provider-models" />
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-3"><Button type="button" variant="secondary" onClick={handleTest} loading={isTesting} disabled={isTesting}>{isTesting ? 'Testing connection...' : 'Test connection'}</Button>{connectionMessage && <span className="text-sm text-[var(--ctp-green)]">{connectionMessage}</span>}</div>
+            <div className="mt-4"><Button type="button" variant="secondary" onClick={() => void loadModels()} loading={isLoadingModels} disabled={isLoadingModels}>{isLoadingModels ? 'Loading models...' : 'Refresh models'}</Button></div>
           </section>
 
-          <div className="flex items-center justify-between border-t border-[var(--ctp-overlay)] pt-6"><p className="max-w-sm text-xs text-[var(--ctp-subtext)]">Your API key is sent only to your server and is never returned to this browser.</p><Button type="submit" variant="primary" loading={isSubmitting} disabled={isSubmitting}>{isSubmitting ? 'Finishing setup...' : 'Finish setup'}</Button></div>
+          <div className="flex items-center justify-end border-t border-[var(--ctp-overlay)] pt-6"><Button type="submit" variant="primary" loading={isSubmitting} disabled={isSubmitting || modelsUnavailable}>{isSubmitting ? 'Finishing setup...' : 'Finish setup'}</Button></div>
         </form>
       </div>
     </main>

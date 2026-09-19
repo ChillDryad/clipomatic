@@ -113,6 +113,13 @@ async def get_setup_status():
     return {"setup_complete": bool(user_count)}
 
 
+@router.get("/setup/ollama-models")
+async def get_setup_ollama_models():
+    """List locally installed models for the first-run Ollama dropdowns."""
+    base_url = os.environ.get("OLLAMA_SETUP_URL", "http://ollama:11434/v1")
+    return {"models": await _list_models(base_url, "ollama")}
+
+
 @router.post("/setup/test-provider")
 async def test_provider(settings: ProviderSettings):
     """Validate provider credentials and return visible model IDs without saving."""
@@ -128,6 +135,8 @@ async def setup_installation(request: SetupRequest, response: Response):
     valid, reason = validate_password_strength(request.password)
     if not valid:
         raise HTTPException(status_code=400, detail=reason)
+    if request.provider != "ollama":
+        raise HTTPException(status_code=400, detail="First-run setup supports local Ollama only")
     normalized = _validate_provider(request)
 
     async with get_session_cm() as session:

@@ -857,6 +857,10 @@ export async function getSetupStatus(): Promise<SetupStatus> {
   return setupRequest('/api/setup/status')
 }
 
+export async function getSetupOllamaModels(): Promise<{ models: string[] }> {
+  return setupRequest('/api/setup/ollama-models')
+}
+
 export async function setup(payload: SetupPayload): Promise<{ user: AuthUser; setup_complete: true }> {
   return setupRequest('/api/setup', {
     method: 'POST',
