@@ -82,8 +82,8 @@ def chat(request: ChatRequest) -> dict[str, Any]:
         fd, output_path = tempfile.mkstemp(suffix=".txt", dir="/tmp/codex")
         os.close(fd)
         command = [
-            "codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
-            "--ephemeral", "--output-last-message", output_path,
+            "codex", "--ask-for-approval", "never", "exec", "--skip-git-repo-check",
+            "--sandbox", "read-only", "--ephemeral", "--output-last-message", output_path,
         ]
         if request.model != "default":
             command.extend(["--model", request.model])
