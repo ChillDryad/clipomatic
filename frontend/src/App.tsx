@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { ThemeProvider } from './context/ThemeContext'
 import { PipelineProvider } from './context/PipelineContext'
@@ -15,7 +16,35 @@ import { RegisterPage } from './pages/RegisterPage'
 import { TeamListPage } from './pages/TeamListPage'
 import { TeamDetailPage } from './pages/TeamDetailPage'
 import { UserSettingsPage } from './pages/UserSettingsPage'
+import { SetupPage } from './pages/SetupPage'
 import { useAuth } from './hooks/useAuth'
+import { getSetupStatus } from './api'
+
+function SetupGate({ children }: { children: React.ReactNode }) {
+  const location = useLocation()
+  const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    getSetupStatus()
+      .then(status => setSetupComplete(status.setup_complete))
+      // Preserve the existing auth routes if setup status cannot be reached.
+      .catch(() => setSetupComplete(true))
+  }, [])
+
+  if (setupComplete === null) {
+    return <div className="min-h-screen flex items-center justify-center text-[var(--ctp-subtext)]">Loading...</div>
+  }
+
+  if (!setupComplete && location.pathname !== '/setup') {
+    return <Navigate to="/setup" replace />
+  }
+
+  if (setupComplete && location.pathname === '/setup') {
+    return <Navigate to="/clip-studio" replace />
+  }
+
+  return <>{children}</>
+}
 
 // Protected route wrapper - redirects to login if not authenticated
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -64,11 +93,13 @@ export default function App() {
   return (
     <BrowserRouter>
       <ThemeProvider>
-        <PipelineProvider>
-          <Routes>
+        <SetupGate>
+          <PipelineProvider>
+            <Routes>
             {/* Public routes - auth pages without PageLayout */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route path="/setup" element={<SetupPage />} />
 
             {/* Protected routes with PageLayout */}
             <Route
@@ -179,8 +210,9 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
-          </Routes>
-        </PipelineProvider>
+            </Routes>
+          </PipelineProvider>
+        </SetupGate>
       </ThemeProvider>
     </BrowserRouter>
   )

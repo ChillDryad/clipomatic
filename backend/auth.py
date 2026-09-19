@@ -70,21 +70,42 @@ def _load_or_generate_rsa_keys() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
             backend=default_backend(),
         )
     else:
-        # Generate new key pair (development only)
-        import warnings
-        warnings.warn(
-            "JWT_PRIVATE_KEY and JWT_PUBLIC_KEY not set. Generating ephemeral RSA keys. "
-            "In production, set these environment variables with persistent keys.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        private_key = rsa.generate_private_key(
-            public_exponent=65537,
-            key_size=2048,
-            backend=default_backend(),
-        )
-        _JWT_PRIVATE_KEY = private_key
-        _JWT_PUBLIC_KEY = private_key.public_key()
+        # Persist generated keys in the workspace so cookies survive container restarts.
+        from pathlib import Path
+        key_dir = Path(os.environ.get("JWT_KEY_DIR", os.path.join(os.environ.get("WORKSPACE_DIR", "/app/workspace"), ".keys")))
+        key_dir.mkdir(parents=True, exist_ok=True)
+        private_path = key_dir / "jwt-private.pem"
+        public_path = key_dir / "jwt-public.pem"
+        try:
+            os.chmod(key_dir, 0o700)
+        except OSError:
+            pass
+        if private_path.exists() and public_path.exists():
+            _JWT_PRIVATE_KEY = serialization.load_pem_private_key(
+                private_path.read_bytes(), password=None, backend=default_backend()
+            )
+            _JWT_PUBLIC_KEY = serialization.load_pem_public_key(
+                public_path.read_bytes(), backend=default_backend()
+            )
+        else:
+            private_key = rsa.generate_private_key(
+                public_exponent=65537, key_size=2048, backend=default_backend()
+            )
+            private_pem = private_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+            public_pem = private_key.public_key().public_bytes(
+                serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            for path, content, mode in ((private_path, private_pem, 0o600), (public_path, public_pem, 0o644)):
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(content)
+            _JWT_PRIVATE_KEY = private_key
+            _JWT_PUBLIC_KEY = private_key.public_key()
 
     return _JWT_PRIVATE_KEY, _JWT_PUBLIC_KEY
 
@@ -109,29 +130,19 @@ security = HTTPBearer()
 # OAuth Token Encryption (Fernet/AES-256)
 # ---------------------------------------------------------------------------
 
-# OAUTH_ENCRYPTION_KEY must be a 32-byte URL-safe base64-encoded Fernet key
-# Generate with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
-OAUTH_ENCRYPTION_KEY = os.environ.get("OAUTH_ENCRYPTION_KEY")
-if not OAUTH_ENCRYPTION_KEY:
-    raise RuntimeError(
-        "OAUTH_ENCRYPTION_KEY environment variable is required for security. "
-        "Generate a secure key with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())' "
-        "Then set it via: export OAUTH_ENCRYPTION_KEY='your-generated-key'"
-    )
-
-from cryptography.fernet import Fernet
-
-_fernet = Fernet(OAUTH_ENCRYPTION_KEY.encode())
+# OAuth and provider credentials share the persistent workspace Fernet key.
+# OAUTH_ENCRYPTION_KEY remains an optional migration override for existing installs.
+from config_store import decrypt_secret, encrypt_secret
 
 
 def encrypt_oauth_token(token: str) -> str:
-    """Encrypt OAuth token at rest using Fernet (AES-128-CBC)."""
-    return _fernet.encrypt(token.encode()).decode()
+    """Encrypt OAuth token at rest using the persistent Fernet key."""
+    return encrypt_secret(token)
 
 
 def decrypt_oauth_token(encrypted_token: str) -> str:
     """Decrypt OAuth token from database."""
-    return _fernet.decrypt(encrypted_token.encode()).decode()
+    return decrypt_secret(encrypted_token)
 
 
 # ---------------------------------------------------------------------------

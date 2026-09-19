@@ -322,11 +322,12 @@ def analyze_video_frames(
     cache_every_batches: int = DEFAULT_CACHE_BATCHES,
     num_ctx: int = DEFAULT_NUM_CTX,
     progress_callback: ProgressCallback | None = None,
+    allow_remote_provider: bool = False,
 ) -> list[dict]:
     """Scan at 1 FPS, select representative frames, and analyze in batches."""
     from llm_policy import validate_local_model
-
-    model = validate_local_model(model)
+    if not allow_remote_provider:
+        model = validate_local_model(model)
     if (
         scan_fps <= 0 or window_seconds <= 0 or max_frames <= 0
         or batch_size <= 0 or cache_every_batches <= 0 or num_ctx <= 0

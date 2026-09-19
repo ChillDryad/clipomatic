@@ -44,7 +44,9 @@ services:
       VISION_BATCH_SIZE: ${VISION_BATCH_SIZE:-2}
       DATABASE_URL: ${DATABASE_URL}
       JWT_KEY_DIR: /app/workspace/.keys
-      OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY}
+      # First-run setup persists provider credentials under the workspace volume.
+      # Legacy OAUTH_ENCRYPTION_KEY is optional and gets migrated on first boot.
+      OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY:-}
       CELERY_BROKER_URL: redis://redis-prod:6379/0
       CELERY_RESULT_BACKEND: redis://redis-prod:6379/1
       CLIP_STUDIO_EXPORT_QUALITY: source

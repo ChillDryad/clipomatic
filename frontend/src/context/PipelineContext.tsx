@@ -79,7 +79,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
             whisperModel: cfg.whisper_model || prev.whisperModel,
             whisperDevice: cfg.whisper_device || prev.whisperDevice,
             llmModel: cfg.llm_model || prev.llmModel,
-            llmBaseUrl: cfg.llm_base_url || prev.llmBaseUrl,
+            llmBaseUrl: cfg.base_url || cfg.llm_base_url || prev.llmBaseUrl,
           }))
         }
       } catch (err) {

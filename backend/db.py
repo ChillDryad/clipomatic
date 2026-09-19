@@ -325,6 +325,15 @@ class User(Base):
     )
 
 
+class InstallationState(Base):
+    """Singleton DB sentinel preventing concurrent first-run owner setup."""
+    __tablename__ = "installation_state"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[float] = mapped_column(Float, default=lambda: time.time())
+
+
 class UserOAuthAccount(Base):
     """
     Links OAuth providers to User - replaces PlatformAccount for auth purposes.

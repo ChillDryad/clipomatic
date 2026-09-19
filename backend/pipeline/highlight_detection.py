@@ -529,6 +529,7 @@ def detect_highlights(
     vision_data: list[dict] | None = None,
     max_chunk_chars: int = _MAX_CHUNK_CHARS,
     num_ctx: int = 8192,
+    allow_remote_provider: bool = False,
 ) -> list[dict]:
     """
     Single-turn approach optimized for Gemma4 with automatic fallback.
@@ -548,12 +549,14 @@ def detect_highlights(
     """
     from llm_policy import validate_local_model
 
-    # Allow cloud models if LLM_ALLOW_CLOUD is set
-    if os.environ.get("LLM_ALLOW_CLOUD", "").lower() in ("1", "true", "yes"):
-        pass  # Skip validation — cloud models allowed
+    # Persistent setup explicitly authorizes OpenAI/custom providers. Existing
+    # environment-based cloud routing still requires LLM_ALLOW_CLOUD=true.
+    if os.environ.get("LLM_ALLOW_CLOUD", "").lower() in ("1", "true", "yes") or allow_remote_provider:
+        pass
     else:
         model = validate_local_model(model)
-    fallback_model = validate_local_model(fallback_model)
+    if not allow_remote_provider:
+        fallback_model = validate_local_model(fallback_model)
 
     from openai import OpenAI
     from openai import APIError, APITimeoutError

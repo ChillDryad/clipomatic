@@ -811,35 +811,82 @@ export function twitchAuthorizeUrl(label: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Config
+// First-run setup and provider configuration
 // ---------------------------------------------------------------------------
 
-export async function getConfig(): Promise<{
-  llm_base_url: string
+export type LlmProvider = 'ollama' | 'openai' | 'custom'
+
+export interface ProviderSettings {
+  provider: LlmProvider
+  base_url: string
+  api_key?: string
   llm_model: string
-  whisper_model: string
-  whisper_device: string
-  nvenc_available: boolean
-}> {
-  const res = await fetch('/api/config', { credentials: 'include' })
-  if (!res.ok) throw new Error(await res.text())
+  highlight_model?: string
+  vision_model?: string
+}
+
+export interface SetupPayload extends ProviderSettings {
+  email: string
+  password: string
+  display_name?: string
+}
+
+export interface SetupStatus {
+  setup_complete: boolean
+}
+
+export interface Config extends Omit<ProviderSettings, 'api_key'> {
+  has_api_key: boolean
+  // Legacy fields remain optional while existing settings UI migrates.
+  llm_base_url?: string
+  whisper_model?: string
+  whisper_device?: string
+  nvenc_available?: boolean
+}
+
+async function setupRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, { credentials: 'include', ...init })
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(error.detail ?? res.statusText)
+  }
   return res.json()
 }
 
-export async function saveConfig(config: {
-  llm_model?: string
+export async function getSetupStatus(): Promise<SetupStatus> {
+  return setupRequest('/api/setup/status')
+}
+
+export async function setup(payload: SetupPayload): Promise<{ user: AuthUser; setup_complete: true }> {
+  return setupRequest('/api/setup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function testProvider(settings: ProviderSettings): Promise<{ models: string[] }> {
+  return setupRequest('/api/setup/test-provider', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+}
+
+export async function getConfig(): Promise<Config> {
+  return setupRequest('/api/config')
+}
+
+export async function saveConfig(config: Partial<ProviderSettings> & {
   llm_base_url?: string
   whisper_model?: string
   whisper_device?: string
 }): Promise<{ success: boolean }> {
-  const res = await fetch('/api/config', {
+  return setupRequest('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
-    credentials: 'include',
   })
-  if (!res.ok) throw new Error(await res.text())
-  return res.json()
 }
 
 // ---------------------------------------------------------------------------

@@ -55,18 +55,13 @@ services:
       WORKSPACE_DIR: /app/workspace
       DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////app/workspace/momiji.db}
       JWT_KEY_DIR: /app/workspace/.keys
-      OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY:?Set a Fernet key in Portainer}
+      # First-run setup persists credentials under /app/workspace/.secrets.
+      # Legacy OAUTH_ENCRYPTION_KEY is optional and gets migrated on first boot.
+      OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY:-}
       RAM_TIER: ${RAM_TIER:-standard}
       WHISPER_MODEL: ${WHISPER_MODEL:-small}
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
-      LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434/v1}
-      LLM_API_KEY: ${LLM_API_KEY:-ollama}
-      LLM_MODEL: ${LLM_MODEL:-gemma3:latest}
-      HIGHLIGHT_LLM_BASE_URL: ${HIGHLIGHT_LLM_BASE_URL:-http://ollama:11434/v1}
-      HIGHLIGHT_LLM_API_KEY: ${HIGHLIGHT_LLM_API_KEY:-ollama}
-      HIGHLIGHT_LLM_MODEL: ${HIGHLIGHT_LLM_MODEL:-gemma4:12b}
-      HIGHLIGHT_FALLBACK_MODEL: ${HIGHLIGHT_FALLBACK_MODEL:-gemma3:latest}
-      LLM_ALLOW_CLOUD: ${LLM_ALLOW_CLOUD:-0}
+      # Provider endpoint, models, and credentials are selected in browser setup.
       OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
       VISION_MODEL: ${VISION_MODEL:-gemma3:latest}
       VISION_SCAN_FPS: ${VISION_SCAN_FPS:-0.25}

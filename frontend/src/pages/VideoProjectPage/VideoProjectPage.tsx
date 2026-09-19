@@ -44,7 +44,7 @@ export function VideoProjectPage() {
   useEffect(() => {
     getConfig()
       .then((cfg) => {
-        setNvencAvailable(cfg.nvenc_available);
+        setNvencAvailable(cfg.nvenc_available ?? false);
         if (cfg.whisper_model) setSelectedWhisperModel(cfg.whisper_model);
         configRef.current = { llm_model: cfg.llm_model };
       })

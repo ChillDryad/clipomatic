@@ -267,9 +267,11 @@ def transcribe_chunked(
         try:
             from pipeline.vision import analyze_video_frames
 
-            vision_model = os.environ.get("VISION_MODEL", os.environ.get("LLM_MODEL", "gemma3:latest"))
-            vision_api_key = os.environ.get("LLM_API_KEY", "")
-            vision_base_url = os.environ.get("LLM_BASE_URL", "")
+            from config_store import provider_config
+            provider = provider_config()
+            vision_model = provider["vision_model"] or os.environ.get("VISION_MODEL", os.environ.get("LLM_MODEL", "gemma3:latest"))
+            vision_api_key = provider["api_key"] or os.environ.get("LLM_API_KEY", "")
+            vision_base_url = provider["base_url"] or os.environ.get("LLM_BASE_URL", "")
 
             if vision_api_key and vision_base_url:
                 _fire(progress_callback, 0.98, f"Analyzing video frames with {vision_model}…")
@@ -283,6 +285,7 @@ def transcribe_chunked(
                     window_seconds=float(os.environ.get("VISION_WINDOW_SECONDS", "60")),
                     max_frames=int(os.environ.get("VISION_MAX_FRAMES", "360")),
                     batch_size=int(os.environ.get("VISION_BATCH_SIZE", "4")),
+                    allow_remote_provider=provider["provider"] in {"openai", "custom"},
                     progress_callback=lambda f, l: _fire(progress_callback, 0.98 + f * 0.01, l),
                 )
         except Exception as exc:
@@ -435,9 +438,11 @@ def transcribe(
             try:
                 from pipeline.vision import analyze_video_frames
 
-                vision_model = os.environ.get("VISION_MODEL", os.environ.get("LLM_MODEL", "gemma3:latest"))
-                vision_api_key = os.environ.get("LLM_API_KEY", "")
-                vision_base_url = os.environ.get("LLM_BASE_URL", "")
+                from config_store import provider_config
+                provider = provider_config()
+                vision_model = provider["vision_model"] or os.environ.get("VISION_MODEL", os.environ.get("LLM_MODEL", "gemma3:latest"))
+                vision_api_key = provider["api_key"] or os.environ.get("LLM_API_KEY", "")
+                vision_base_url = provider["base_url"] or os.environ.get("LLM_BASE_URL", "")
                 vision_scan_fps = float(os.environ.get("VISION_SCAN_FPS", "1"))
                 vision_window_seconds = float(os.environ.get("VISION_WINDOW_SECONDS", "60"))
                 vision_max_frames = int(os.environ.get("VISION_MAX_FRAMES", "360"))
@@ -455,6 +460,7 @@ def transcribe(
                         window_seconds=vision_window_seconds,
                         max_frames=vision_max_frames,
                         batch_size=vision_batch_size,
+                        allow_remote_provider=provider["provider"] in {"openai", "custom"},
                         progress_callback=lambda f, l: _fire(progress_callback, 0.98 + f * 0.01, l),
                     )
                     result["vision_analysis"] = vision_data

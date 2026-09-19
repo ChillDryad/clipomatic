@@ -239,8 +239,12 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
         with open(transcript_path, "r", encoding="utf-8") as f:
             transcript_data = json.load(f)
 
-    api_key = os.environ.get("LLM_API_KEY", "")
-    base_url = os.environ.get("LLM_BASE_URL", "")
+    # Persistent first-run setup overrides environment migration defaults.
+    # This config is shared by API and Celery through the workspace volume.
+    from config_store import provider_config
+    saved_provider = provider_config()
+    api_key = saved_provider["api_key"] or os.environ.get("LLM_API_KEY", "")
+    base_url = saved_provider["base_url"] or os.environ.get("LLM_BASE_URL", "")
     if not api_key or not base_url:
         raise RuntimeError("LLM_API_KEY and LLM_BASE_URL must be set for highlight detection.")
 
@@ -253,7 +257,10 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
     else:
         highlight_base_url = base_url
         highlight_api_key = api_key
-    highlight_model = config.get("llm_model", os.environ.get("HIGHLIGHT_LLM_MODEL", "gemma4:12b"))
+    highlight_model = config.get(
+        "llm_model",
+        saved_provider["highlight_model"] or os.environ.get("HIGHLIGHT_LLM_MODEL", "gemma4:12b"),
+    )
 
     timeout_per_chunk = float(os.environ.get("HIGHLIGHT_TIMEOUT_PER_CHUNK", "600"))
     fallback_model = os.environ.get("HIGHLIGHT_FALLBACK_MODEL", "gemma3:latest")
@@ -268,6 +275,7 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
         fallback_model=fallback_model,
         audio_energy=transcript_data.get("audio_energy"),
         vision_data=transcript_data.get("vision_analysis"),
+        allow_remote_provider=saved_provider["provider"] in {"openai", "custom"},
     )
 
     # Write to cache file
