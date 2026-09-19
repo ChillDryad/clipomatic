@@ -1,0 +1,126 @@
+# Clipomatic — static Portainer stack for ChillDryad/clipomatic
+#
+# Deploy this file directly as a Portainer Stack. It pulls prebuilt x86_64
+# images from GHCR; no repository checkout, Docker build, or environment file
+# is required. Complete provider/owner setup at http://YOUR-HOST:7865/setup.
+#
+# For private GHCR packages, configure ghcr.io registry credentials in Portainer.
+# The ChillDryad repository is public; use IMAGE_TAG=latest by default.
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - clipomatic-redis:/data
+    networks: [clipomatic]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    mem_limit: 384m
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_KEEP_ALIVE: "0"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    volumes:
+      - clipomatic-ollama:/root/.ollama
+    networks: [clipomatic]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 9g
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/chilldryad/clipomatic-backend:latest
+    platform: linux/amd64
+    environment: &app_environment
+      WORKSPACE_DIR: /app/workspace
+      DATABASE_URL: sqlite+aiosqlite:////app/workspace/momiji.db
+      JWT_KEY_DIR: /app/workspace/.keys
+      RAM_TIER: standard
+      WHISPER_MODEL: small
+      WHISPER_DEVICE: cpu
+      OLLAMA_NUM_CTX: "8192"
+      VISION_SCAN_FPS: "0.25"
+      VISION_WINDOW_SECONDS: "120"
+      VISION_MAX_FRAMES: "180"
+      VISION_BATCH_SIZE: "2"
+      HIGHLIGHT_CONTEXT_CARRYOVER: "120"
+      HIGHLIGHT_PRIORITY_WINDOW: "30"
+      HIGHLIGHT_PRIORITY_BOOST: "10"
+      HIGHLIGHT_MAX_CLIP_DURATION: "120"
+      CLIP_STUDIO_EXPORT_QUALITY: source
+      CLIP_STUDIO_EXPORT_FORMAT: mp4
+      CLIP_STUDIO_INCLUDE_METADATA: "true"
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    volumes:
+      - clipomatic-workspace:/app/workspace
+    networks: [clipomatic]
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    mem_limit: 1g
+    restart: unless-stopped
+
+  worker:
+    image: ghcr.io/chilldryad/clipomatic-backend:latest
+    platform: linux/amd64
+    command: celery -A celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=1 --max-memory-per-child=2621440
+    environment: *app_environment
+    volumes:
+      - clipomatic-workspace:/app/workspace
+    networks: [clipomatic]
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    mem_limit: 3g
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/chilldryad/clipomatic-frontend:latest
+    platform: linux/amd64
+    environment:
+      BACKEND_HOST: backend
+    ports:
+      - "7865:80"
+    networks: [clipomatic]
+    depends_on:
+      backend:
+        condition: service_healthy
+    mem_limit: 128m
+    restart: unless-stopped
+
+networks:
+  clipomatic:
+    name: clipomatic
+    driver: bridge
+
+volumes:
+  clipomatic-workspace:
+    name: clipomatic-workspace
+  clipomatic-redis:
+    name: clipomatic-redis
+  clipomatic-ollama:
+    name: clipomatic-ollama
