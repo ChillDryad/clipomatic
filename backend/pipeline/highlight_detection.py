@@ -382,6 +382,7 @@ def _chat(
     temperature: float = 0.4,
     timeout: float = 300.0,
     num_ctx: int = 8192,
+    use_ollama_options: bool = True,
 ) -> str:
     """
     Send a chat request, falling back if json_object response_format is unsupported.
@@ -394,13 +395,14 @@ def _chat(
         temperature: Sampling temperature
         timeout: Request timeout in seconds (default 300s / 5 minutes)
     """
-    kwargs = dict(
+    kwargs: dict = dict(
         model=model,
         messages=[{"role": "system", "content": system}] + messages,
         temperature=temperature,
         timeout=timeout,
-        extra_body={"num_ctx": num_ctx},
     )
+    if use_ollama_options:
+        kwargs["extra_body"] = {"num_ctx": num_ctx}
     try:
         resp = client.chat.completions.create(**kwargs, response_format={"type": "json_object"})
     except Exception:
@@ -656,7 +658,8 @@ def detect_highlights(
 
         try:
             answer = _chat(client, model, system_prompt, [{"role": "user", "content": user_message}],
-                          temperature=0.7, timeout=timeout_per_chunk, num_ctx=num_ctx)
+                          temperature=0.7, timeout=timeout_per_chunk, num_ctx=num_ctx,
+                          use_ollama_options=not allow_remote_provider)
             clips = _parse_clips(answer)
             if clips:
                 all_clips.extend(clips)
@@ -676,7 +679,8 @@ def detect_highlights(
         try:
             _cb(base_progress + 0.05, f"{chunk_label} — retrying with {fallback_model}…")
             answer = _chat(client, fallback_model, system_prompt, [{"role": "user", "content": user_message}],
-                          temperature=0.7, timeout=timeout_per_chunk, num_ctx=num_ctx)
+                          temperature=0.7, timeout=timeout_per_chunk, num_ctx=num_ctx,
+                          use_ollama_options=not allow_remote_provider)
             clips = _parse_clips(answer)
             if clips:
                 all_clips.extend(clips)

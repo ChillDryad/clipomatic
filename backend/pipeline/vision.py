@@ -419,16 +419,18 @@ def analyze_video_frames(
                 })
 
             try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
+                request_kwargs: dict = {
+                    "model": model,
+                    "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": content},
                     ],
-                    temperature=0.3,
-                    timeout=120.0,
-                    extra_body={"num_ctx": num_ctx},
-                )
+                    "temperature": 0.3,
+                    "timeout": 120.0,
+                }
+                if not allow_remote_provider:
+                    request_kwargs["extra_body"] = {"num_ctx": num_ctx}
+                response = client.chat.completions.create(**request_kwargs)
                 raw = response.choices[0].message.content or ""
                 parsed = _parse_vision_batch_response(raw, timestamps)
                 results.extend(parsed)
