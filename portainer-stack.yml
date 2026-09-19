@@ -54,6 +54,25 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # Official Codex CLI bridge. Authorize it once on the host with:
+  # docker exec -it clipomatic-codex codex login --device-auth
+  codex:
+    image: ghcr.io/chilldryad/clipomatic-codex-bridge:latest
+    platform: linux/amd64
+    container_name: clipomatic-codex
+    environment:
+      CODEX_HOME: /home/codex/.codex
+    volumes:
+      - clipomatic-codex-auth:/home/codex/.codex
+    networks: [clipomatic]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+    restart: unless-stopped
+
   backend:
     image: ghcr.io/chilldryad/clipomatic-backend:latest
     platform: linux/amd64
@@ -61,6 +80,8 @@ services:
       WORKSPACE_DIR: /app/workspace
       DATABASE_URL: sqlite+aiosqlite:////app/workspace/momiji.db
       JWT_KEY_DIR: /app/workspace/.keys
+      CODEX_BRIDGE_URL: http://codex:8090
+      CODEX_LOGIN_COMMAND: docker exec -it clipomatic-codex codex login --device-auth
       RAM_TIER: standard
       WHISPER_MODEL: small
       WHISPER_DEVICE: cpu
@@ -88,6 +109,8 @@ services:
         condition: service_healthy
       ollama-init:
         condition: service_completed_successfully
+      codex:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
@@ -140,3 +163,5 @@ volumes:
     name: clipomatic-redis
   clipomatic-ollama:
     name: clipomatic-ollama
+  clipomatic-codex-auth:
+    name: clipomatic-codex-auth

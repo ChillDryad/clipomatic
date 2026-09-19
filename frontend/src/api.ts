@@ -814,11 +814,11 @@ export function twitchAuthorizeUrl(label: string): string {
 // First-run setup and provider configuration
 // ---------------------------------------------------------------------------
 
-export type LlmProvider = 'ollama' | 'openai'
+export type LlmProvider = 'ollama' | 'codex'
 
 export interface ProviderSettings {
   provider: LlmProvider
-  base_url: string
+  base_url?: string
   api_key?: string
   llm_model: string
   highlight_model?: string
@@ -859,6 +859,16 @@ export async function getSetupStatus(): Promise<SetupStatus> {
 
 export async function getSetupOllamaModels(): Promise<{ models: string[] }> {
   return setupRequest('/api/setup/ollama-models')
+}
+
+export interface CodexSetupStatus {
+  authenticated: boolean
+  login_command: string
+  models: string[]
+}
+
+export async function getSetupCodexStatus(): Promise<CodexSetupStatus> {
+  return setupRequest('/api/setup/codex/status')
 }
 
 export async function setup(payload: SetupPayload): Promise<{ user: AuthUser; setup_complete: true }> {

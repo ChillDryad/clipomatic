@@ -5,19 +5,18 @@ import test from 'node:test'
 
 const source = (relativePath: string) => readFileSync(new URL(relativePath, import.meta.url), 'utf8')
 
-test('setup wizard exposes first-run Ollama model discovery', () => {
+test('setup wizard exposes Ollama and Codex setup discovery', () => {
   const api = source('./api.ts')
 
-  assert.match(api, /export type LlmProvider = 'ollama' \| 'openai'/)
-  assert.match(api, /export async function getSetupStatus\(\)/)
-  assert.match(api, /setupRequest\('\/api\/setup\/status'\)/)
+  assert.match(api, /export type LlmProvider = 'ollama' \| 'codex'/)
+  assert.match(api, /export interface CodexSetupStatus \{[\s\S]*?authenticated: boolean[\s\S]*?login_command: string[\s\S]*?models: string\[\]/)
   assert.match(api, /export async function getSetupOllamaModels\(\): Promise<\{ models: string\[\] \}>/)
   assert.match(api, /setupRequest\('\/api\/setup\/ollama-models'\)/)
-  assert.match(api, /export async function setup\(payload: SetupPayload\)/)
-  assert.match(api, /setupRequest\('\/api\/setup', \{[\s\S]*?method: 'POST'/)
+  assert.match(api, /export async function getSetupCodexStatus\(\): Promise<CodexSetupStatus>/)
+  assert.match(api, /setupRequest\('\/api\/setup\/codex\/status'\)/)
 })
 
-test('setup wizard is available before auth and configures only local Ollama', () => {
+test('setup wizard selects providers and blocks unauthenticated Codex setup', () => {
   const app = source('./App.tsx')
   const setup = source('./pages/SetupPage.tsx')
 
@@ -26,12 +25,14 @@ test('setup wizard is available before auth and configures only local Ollama', (
   assert.match(app, /getSetupStatus\(\)/)
   assert.match(app, /<Navigate to="\/setup" replace \/>/)
   assert.match(setup, /getSetupOllamaModels/)
-  assert.match(setup, /http:\/\/ollama:11434\/v1/)
-  assert.match(setup, /<select/)
-  assert.match(setup, /Refresh models/)
-  assert.match(setup, /ollama pull/)
-  assert.match(setup, /provider: 'ollama'/)
-  assert.match(setup, /base_url: 'http:\/\/ollama:11434\/v1'/)
+  assert.match(setup, /getSetupCodexStatus/)
+  assert.match(setup, /provider === 'ollama' \? await getSetupOllamaModels\(\) : await getSetupCodexStatus\(\)/)
+  assert.match(setup, /value="ollama"/)
+  assert.match(setup, /value="codex"/)
+  assert.match(setup, /codexStatus\.login_command/)
+  assert.match(setup, /navigator\.clipboard\.writeText/)
+  assert.match(setup, /disabled=\{isSubmitting \|\| modelsUnavailable \|\| codexUnauthenticated\}/)
+  assert.match(setup, /provider,/)
   assert.match(setup, /llm_model: llmModel/)
   assert.match(setup, /highlight_model: highlightModel/)
   assert.match(setup, /vision_model: visionModel/)

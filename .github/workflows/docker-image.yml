@@ -37,6 +37,10 @@ jobs:
             context: ./frontend
             file: ./frontend/Dockerfile
             image: ghcr.io/${{ github.repository_owner }}/clipomatic-frontend
+          - name: codex-bridge
+            context: ./codex-bridge
+            file: ./codex-bridge/Dockerfile
+            image: ghcr.io/${{ github.repository_owner }}/clipomatic-codex-bridge
 
     steps:
       - name: Check out source

@@ -114,6 +114,8 @@ def provider_config() -> dict[str, str]:
     api_key = decrypt_secret(config["api_key_encrypted"]) if config.get("api_key_encrypted") else ""
     if config.get("provider") == "ollama" and not api_key:
         api_key = "ollama"
+    if config.get("provider") == "codex" and not api_key:
+        api_key = "codex"
     return {
         "base_url": config.get("base_url", ""),
         "api_key": api_key,

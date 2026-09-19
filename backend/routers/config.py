@@ -37,11 +37,12 @@ router = APIRouter(prefix="/api", tags=["Configuration"])
 _PROVIDER_DEFAULTS = {
     "ollama": ("http://ollama:11434/v1", "gemma3:latest", "gemma4:12b"),
     "openai": ("https://api.openai.com/v1", "gpt-4o-mini", "gpt-4o-mini"),
+    "codex": ("http://codex:8090/v1", "default", "default"),
 }
 
 
 class ProviderSettings(BaseModel):
-    provider: Literal["ollama", "openai"] = "ollama"
+    provider: Literal["ollama", "openai", "codex"] = "ollama"
     base_url: str = ""
     api_key: str | None = Field(default=None, min_length=1)
     llm_model: str = ""
@@ -57,7 +58,7 @@ class SetupRequest(ProviderSettings):
 
 class ConfigUpdate(ProviderSettings):
     # All values optional during settings edits; absent secret preserves current.
-    provider: Literal["ollama", "openai"] | None = None
+    provider: Literal["ollama", "openai", "codex"] | None = None
     base_url: str | None = None
     llm_model: str | None = None
     highlight_model: str | None = None
@@ -77,6 +78,10 @@ def _validate_provider(settings: ProviderSettings) -> dict[str, str]:
     local_ollama_hosts = {"ollama", "ollama-shared", "localhost", "127.0.0.1", "host.docker.internal"}
     if settings.provider == "ollama" and host not in local_ollama_hosts:
         raise HTTPException(status_code=400, detail="Ollama must use a local Ollama endpoint")
+    if settings.provider == "codex":
+        codex_url = os.environ.get("CODEX_BRIDGE_URL", "http://codex:8090").rstrip("/") + "/v1"
+        if base_url != codex_url:
+            raise HTTPException(status_code=400, detail="Codex must use the internal Codex bridge")
     if settings.provider == "openai":
         if parsed.scheme != "https" or host != "api.openai.com":
             raise HTTPException(status_code=400, detail="OpenAI must use https://api.openai.com/v1")
@@ -113,6 +118,32 @@ async def get_setup_status():
     return {"setup_complete": bool(user_count)}
 
 
+async def _codex_status() -> dict:
+    import httpx
+
+    bridge_url = os.environ.get("CODEX_BRIDGE_URL", "http://codex:8090").rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(f"{bridge_url}/health")
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="Codex bridge is unavailable") from exc
+
+
+@router.get("/setup/codex/status")
+async def get_setup_codex_status():
+    """Expose official Codex login status without exposing credentials."""
+    status = await _codex_status()
+    return {
+        "authenticated": bool(status.get("authenticated")),
+        "models": status.get("models", []),
+        "login_command": os.environ.get(
+            "CODEX_LOGIN_COMMAND", "docker exec -it clipomatic-codex codex login --device-auth"
+        ),
+    }
+
+
 @router.get("/setup/ollama-models")
 async def get_setup_ollama_models():
     """List locally installed models for the first-run Ollama dropdowns."""
@@ -135,8 +166,12 @@ async def setup_installation(request: SetupRequest, response: Response):
     valid, reason = validate_password_strength(request.password)
     if not valid:
         raise HTTPException(status_code=400, detail=reason)
-    if request.provider != "ollama":
-        raise HTTPException(status_code=400, detail="First-run setup supports local Ollama only")
+    if request.provider not in {"ollama", "codex"}:
+        raise HTTPException(status_code=400, detail="First-run setup supports local Ollama or Codex subscription access")
+    if request.provider == "codex":
+        status = await _codex_status()
+        if not status.get("authenticated"):
+            raise HTTPException(status_code=400, detail="Connect ChatGPT in the Codex container before completing setup")
     normalized = _validate_provider(request)
 
     async with get_session_cm() as session:
