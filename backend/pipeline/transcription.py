@@ -285,7 +285,7 @@ def transcribe_chunked(
                     window_seconds=float(os.environ.get("VISION_WINDOW_SECONDS", "60")),
                     max_frames=int(os.environ.get("VISION_MAX_FRAMES", "360")),
                     batch_size=int(os.environ.get("VISION_BATCH_SIZE", "4")),
-                    allow_remote_provider=provider["provider"] in {"openai", "custom"},
+                    allow_remote_provider=provider["provider"] == "openai",
                     progress_callback=lambda f, l: _fire(progress_callback, 0.98 + f * 0.01, l),
                 )
         except Exception as exc:
@@ -460,7 +460,7 @@ def transcribe(
                         window_seconds=vision_window_seconds,
                         max_frames=vision_max_frames,
                         batch_size=vision_batch_size,
-                        allow_remote_provider=provider["provider"] in {"openai", "custom"},
+                        allow_remote_provider=provider["provider"] == "openai",
                         progress_callback=lambda f, l: _fire(progress_callback, 0.98 + f * 0.01, l),
                     )
                     result["vision_analysis"] = vision_data

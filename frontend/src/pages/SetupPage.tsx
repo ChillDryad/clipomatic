@@ -7,13 +7,11 @@ import { Input } from '../components/ui/Input'
 const providerDefaults: Record<LlmProvider, Pick<ProviderSettings, 'base_url' | 'llm_model'>> = {
   ollama: { base_url: 'http://ollama:11434/v1', llm_model: 'llama3.1:8b' },
   openai: { base_url: 'https://api.openai.com/v1', llm_model: 'gpt-4o-mini' },
-  custom: { base_url: '', llm_model: '' },
 }
 
 const providerOptions: Array<{ value: LlmProvider; title: string; description: string }> = [
   { value: 'ollama', title: 'Ollama', description: 'Run local models on this server' },
   { value: 'openai', title: 'OpenAI', description: 'Use your OpenAI API key' },
-  { value: 'custom', title: 'Custom endpoint', description: 'Any OpenAI-compatible API' },
 ]
 
 export function SetupPage() {

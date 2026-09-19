@@ -8,7 +8,7 @@ const source = (relativePath: string) => readFileSync(new URL(relativePath, impo
 test('setup wizard exposes first-run provider setup APIs', () => {
   const api = source('./api.ts')
 
-  assert.match(api, /export type LlmProvider = 'ollama' \| 'openai' \| 'custom'/)
+  assert.match(api, /export type LlmProvider = 'ollama' \| 'openai'/)
   assert.match(api, /export async function getSetupStatus\(\)/)
   assert.match(api, /setupRequest\('\/api\/setup\/status'\)/)
   assert.match(api, /export async function setup\(payload: SetupPayload\)/)

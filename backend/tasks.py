@@ -275,7 +275,7 @@ def _run_highlights(project_data: dict, config: dict, progress_cb) -> list:
         fallback_model=fallback_model,
         audio_energy=transcript_data.get("audio_energy"),
         vision_data=transcript_data.get("vision_analysis"),
-        allow_remote_provider=saved_provider["provider"] in {"openai", "custom"},
+        allow_remote_provider=saved_provider["provider"] == "openai",
     )
 
     # Write to cache file

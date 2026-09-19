@@ -814,7 +814,7 @@ export function twitchAuthorizeUrl(label: string): string {
 // First-run setup and provider configuration
 // ---------------------------------------------------------------------------
 
-export type LlmProvider = 'ollama' | 'openai' | 'custom'
+export type LlmProvider = 'ollama' | 'openai'
 
 export interface ProviderSettings {
   provider: LlmProvider

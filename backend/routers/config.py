@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import os
 import re
-import socket
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -43,7 +41,7 @@ _PROVIDER_DEFAULTS = {
 
 
 class ProviderSettings(BaseModel):
-    provider: Literal["ollama", "openai", "custom"] = "ollama"
+    provider: Literal["ollama", "openai"] = "ollama"
     base_url: str = ""
     api_key: str | None = Field(default=None, min_length=1)
     llm_model: str = ""
@@ -59,7 +57,7 @@ class SetupRequest(ProviderSettings):
 
 class ConfigUpdate(ProviderSettings):
     # All values optional during settings edits; absent secret preserves current.
-    provider: Literal["ollama", "openai", "custom"] | None = None
+    provider: Literal["ollama", "openai"] | None = None
     base_url: str | None = None
     llm_model: str | None = None
     highlight_model: str | None = None
@@ -84,17 +82,6 @@ def _validate_provider(settings: ProviderSettings) -> dict[str, str]:
             raise HTTPException(status_code=400, detail="OpenAI must use https://api.openai.com/v1")
         if not settings.api_key:
             raise HTTPException(status_code=400, detail="An OpenAI API key is required")
-    if settings.provider == "custom":
-        if parsed.scheme != "https":
-            raise HTTPException(status_code=400, detail="Custom providers must use HTTPS")
-        try:
-            addresses = {item[4][0] for item in socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)}
-            if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
-                raise ValueError("non-public address")
-        except (OSError, ValueError):
-            raise HTTPException(status_code=400, detail="Custom provider must resolve only to public addresses") from None
-    if settings.provider == "custom" and not base_url:
-        raise HTTPException(status_code=400, detail="A custom provider URL is required")
     return {
         "provider": settings.provider,
         "base_url": base_url,
