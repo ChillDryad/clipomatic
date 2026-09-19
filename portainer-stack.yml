@@ -45,7 +45,7 @@ services:
   ollama-init:
     image: ollama/ollama:latest
     entrypoint: ["/bin/sh", "-c"]
-    command: ollama pull gemma3:latest && ollama pull gemma4:12b
+    command: ollama pull gemma3:latest && ollama pull gemma4:e2b
     environment:
       OLLAMA_HOST: ollama:11434
     networks: [clipomatic]
