@@ -147,7 +147,11 @@ async def get_setup_codex_status():
 @router.get("/setup/ollama-models")
 async def get_setup_ollama_models():
     """List locally installed models for the first-run Ollama dropdowns."""
-    base_url = os.environ.get("OLLAMA_SETUP_URL", "http://ollama:11434/v1")
+    base_url = (
+        os.environ.get("OLLAMA_SETUP_URL")
+        or os.environ.get("LLM_BASE_URL")
+        or "http://ollama:11434/v1"
+    )
     return {"models": await _list_models(base_url, "ollama")}
 
 

@@ -30,6 +30,8 @@ services:
       - VISION_BATCH_SIZE=${VISION_BATCH_SIZE:-4}
       - DATABASE_URL=${DATABASE_URL}
       - JWT_KEY_DIR=/app/workspace/.keys
+      - CODEX_BRIDGE_URL=http://momiji-codex-dev:8090
+      - CODEX_LOGIN_COMMAND=docker exec -it momiji-codex-dev codex login --device-auth
       - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
       - CELERY_BROKER_URL=redis://redis-dev:6379/0
       - CELERY_RESULT_BACKEND=redis://redis-dev:6379/1
@@ -54,6 +56,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - momiji-dev-net
+    restart: unless-stopped
+
+  momiji-codex-dev:
+    build:
+      context: ./codex-bridge
+      dockerfile: Dockerfile
+    container_name: momiji-codex-dev
+    environment:
+      - CODEX_HOME=/home/codex/.codex
+    volumes:
+      - ./workspace-dev/codex-auth:/home/codex/.codex
     networks:
       - momiji-dev-net
     restart: unless-stopped
@@ -91,8 +106,8 @@ services:
       # Cloud LLM for highlight detection (host Ollama with cloud models)
       - LLM_ALLOW_CLOUD=1
       - HIGHLIGHT_LLM_BASE_URL=http://host.docker.internal:11434/v1
-      - HIGHLIGHT_LLM_API_KEY=ollama
-      - HIGHLIGHT_LLM_MODEL=gemma4:e4b
+      - HIGHLIGHT_LLM_API_KEY=3e122f4eb815a018b0c5215f7d7bb21ae25c7c129791d5c0
+      - HIGHLIGHT_LLM_MODEL=gemma4:31b-cloud
     volumes:
       - ./workspace-dev:/app/workspace
     networks:

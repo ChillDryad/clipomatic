@@ -20,5 +20,9 @@ workspace/
 .DS_Store
 *.log
 
+# Test artifacts
+cov_html/
+.coverage
+
 # Docs
 README.md
