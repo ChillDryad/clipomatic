@@ -273,7 +273,7 @@ def transcribe_chunked(
             vision_api_key = provider["api_key"] or os.environ.get("LLM_API_KEY", "")
             vision_base_url = provider["base_url"] or os.environ.get("LLM_BASE_URL", "")
 
-            if vision_api_key and vision_base_url:
+            if vision_model.lower() not in {"none", "off", "disabled"} and vision_api_key and vision_base_url:
                 _fire(progress_callback, 0.98, f"Analyzing video frames with {vision_model}…")
                 vision_data = analyze_video_frames(
                     video_path=video_path,
@@ -448,7 +448,7 @@ def transcribe(
                 vision_max_frames = int(os.environ.get("VISION_MAX_FRAMES", "360"))
                 vision_batch_size = int(os.environ.get("VISION_BATCH_SIZE", "4"))
 
-                if vision_api_key and vision_base_url:
+                if vision_model.lower() not in {"none", "off", "disabled"} and vision_api_key and vision_base_url:
                     _fire(progress_callback, 0.98, f"Analyzing video frames with {vision_model}…")
                     vision_data = analyze_video_frames(
                         video_path=video_path,

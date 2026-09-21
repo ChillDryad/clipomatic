@@ -80,6 +80,7 @@ services:
       WORKSPACE_DIR: /app/workspace
       DATABASE_URL: sqlite+aiosqlite:////app/workspace/momiji.db
       JWT_KEY_DIR: /app/workspace/.keys
+      OLLAMA_BASE_URL: http://ollama:11434/v1
       CODEX_BRIDGE_URL: http://codex:8090
       CODEX_LOGIN_COMMAND: docker exec -it clipomatic-codex codex login --device-auth
       RAM_TIER: standard

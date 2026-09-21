@@ -10,7 +10,8 @@ test('setup wizard exposes Ollama and Codex setup discovery', () => {
 
   assert.match(api, /export type LlmProvider = 'ollama' \| 'codex'/)
   assert.match(api, /export interface CodexSetupStatus \{[\s\S]*?authenticated: boolean[\s\S]*?login_command: string[\s\S]*?models: string\[\]/)
-  assert.match(api, /export async function getSetupOllamaModels\(\): Promise<\{ models: string\[\] \}>/)
+  assert.match(api, /export interface OllamaSetupModels \{[\s\S]*?models: string\[\][\s\S]*?base_url: string[\s\S]*?\}/)
+  assert.match(api, /export async function getSetupOllamaModels\(\): Promise<OllamaSetupModels>/)
   assert.match(api, /setupRequest\('\/api\/setup\/ollama-models'\)/)
   assert.match(api, /export async function getSetupCodexStatus\(\): Promise<CodexSetupStatus>/)
   assert.match(api, /setupRequest\('\/api\/setup\/codex\/status'\)/)

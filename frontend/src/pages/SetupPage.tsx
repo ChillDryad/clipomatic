@@ -8,6 +8,7 @@ const ollamaBaseUrl = 'http://ollama:11434/v1'
 
 export function SetupPage() {
   const { setUser } = useAuth()
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState('')
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
@@ -32,11 +33,12 @@ export function SetupPage() {
     try {
       const response = provider === 'ollama' ? await getSetupOllamaModels() : await getSetupCodexStatus()
       const nextModels = response.models
+      if (provider === 'ollama') setOllamaBaseUrl((response as { base_url: string }).base_url)
       setModels(nextModels)
       if (provider === 'codex') setCodexStatus(response as CodexSetupStatus)
       setLlmModel(current => nextModels.includes(current) ? current : (nextModels[0] ?? ''))
       setHighlightModel(current => nextModels.includes(current) ? current : (nextModels[0] ?? ''))
-      setVisionModel(current => nextModels.includes(current) ? current : (nextModels[0] ?? ''))
+      setVisionModel(current => provider === 'ollama' && !current ? 'none' : (current === 'none' || nextModels.includes(current) ? current : (nextModels[0] ?? '')))
       if (provider === 'ollama' && !nextModels.length) {
         setModelError('No local Ollama models are available. Pull a model with `ollama pull llama3.1:8b`, then refresh this list.')
       }
@@ -160,6 +162,7 @@ export function SetupPage() {
               </label>
               <label className="text-sm font-medium text-[var(--ctp-text)]">Vision model
                 <select value={visionModel} onChange={event => setVisionModel(event.target.value)} disabled={modelsUnavailable || codexUnauthenticated} required className="mt-1 w-full rounded-lg border border-[var(--ctp-overlay)] bg-[var(--ctp-surface)] px-3 py-2 text-[var(--ctp-text)] disabled:cursor-not-allowed disabled:opacity-60">
+                  <option value="none">Skip vision analysis — recommended for local hardware</option>
                   {models.map(model => <option key={model} value={model}>{model}</option>)}
                 </select>
               </label>

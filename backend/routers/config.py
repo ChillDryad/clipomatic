@@ -35,7 +35,7 @@ from utils.helpers import _set_auth_cookies, _user_dict
 router = APIRouter(prefix="/api", tags=["Configuration"])
 
 _PROVIDER_DEFAULTS = {
-    "ollama": ("http://ollama:11434/v1", "gemma3:latest", "gemma4:12b"),
+    "ollama": (os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434/v1"), "gemma3:latest", "gemma4:12b"),
     "openai": ("https://api.openai.com/v1", "gpt-4o-mini", "gpt-4o-mini"),
     "codex": ("http://codex:8090/v1", "default", "default"),
 }
@@ -152,7 +152,10 @@ async def get_setup_ollama_models():
         or os.environ.get("LLM_BASE_URL")
         or "http://ollama:11434/v1"
     )
-    return {"models": await _list_models(base_url, "ollama")}
+    return {
+        "models": await _list_models(base_url, "ollama"),
+        "base_url": base_url,
+    }
 
 
 @router.post("/setup/test-provider")
